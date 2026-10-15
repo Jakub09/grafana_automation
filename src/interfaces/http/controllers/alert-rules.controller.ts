@@ -3,7 +3,8 @@ import { Container } from '../../../bootstrap/container';
 import { ApiRegistry } from '../api-registry';
 import { asyncHandler } from '../middlewares/async-handler';
 import { alertRuleJson } from '../presenters';
-import { alertRuleFilterSchema, parseBody, updateAlertRuleSchema } from '../validation';
+import { alertRuleFilterSchema, groupIntervalSchema, parseBody, updateAlertRuleSchema } from '../validation';
+import { parseDurationMs } from '../../../domain/shared/time-range';
 
 export function alertRulesRouter(c: Container, registry: ApiRegistry) {
     const r = registry.router('/api/alert-rules');
@@ -12,6 +13,24 @@ export function alertRulesRouter(c: Container, registry: ApiRegistry) {
     r.get('/', { tag, summary: 'Lista reguł alertów', query: alertRuleFilterSchema }, asyncHandler(async (req, res) => {
         const rules = await c.alertRules.list(parseBody(alertRuleFilterSchema, req.query));
         res.json(rules.map(alertRuleJson));
+    }));
+
+    r.get('/groups/:folderUid/:group', { tag, summary: 'Interwał ewaluacji grupy reguł' }, asyncHandler(async (req, res) => {
+        const seconds = await c.alertRules.getGroupInterval(req.params.folderUid, req.params.group);
+        res.json({ folderUid: req.params.folderUid, group: req.params.group, intervalSeconds: seconds });
+    }));
+
+    r.put('/groups/:folderUid/:group', {
+        tag,
+        summary: 'Zmiana interwału ewaluacji grupy reguł',
+        description: 'W Grafanie interwał dotyczy całej grupy (folder + grupa). Wielokrotność 10 s, np. "30s", "1m", "5m". '
+            + 'Pending period reguł grupy powinien być jego wielokrotnością.',
+        body: groupIntervalSchema,
+    }, asyncHandler(async (req, res) => {
+        const { interval } = parseBody(groupIntervalSchema, req.body);
+        const seconds = parseDurationMs(interval) / 1000;
+        await c.alertRules.setGroupInterval(req.params.folderUid, req.params.group, seconds);
+        res.json({ folderUid: req.params.folderUid, group: req.params.group, intervalSeconds: seconds });
     }));
 
     r.get('/:uid', { tag, summary: 'Reguła alertu' }, asyncHandler(async (req, res) => {

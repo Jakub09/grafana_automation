@@ -4,6 +4,7 @@ import { GrafanaDashboardResource, GrafanaOverride, GrafanaPanel, GrafanaTarget 
 import { defaultDashboardSpec, defaultTimeseriesPanel } from './grafana-defaults';
 
 const FOLDER_ANNOTATION = 'grafana.app/folder';
+const EXPRESSION_DS = { type: '__expr__', uid: '__expr__', name: 'Expression' };
 const DEFAULT_GRID = { x: 0, y: 0, w: 12, h: 8 };
 
 /**
@@ -80,24 +81,41 @@ const spanNullsOf = (value: unknown): boolean | number | undefined =>
 export function panelToDomain(raw: GrafanaPanel): Panel {
     const colorByName = new Map<string, string>();
     const dashedNames = new Set<string>();
+    const unitByName = new Map<string, string>();
+    const displayNameByRef = new Map<string, string>();
     for (const o of raw.fieldConfig?.overrides ?? []) {
+        const prop = (id: string) => o.properties?.find(p => p.id === id)?.value;
+        if (o.matcher?.id === 'byFrameRefID') {
+            const name = prop('displayName');
+            if (typeof name === 'string') displayNameByRef.set(o.matcher.options, name);
+            continue;
+        }
         if (o.matcher?.id !== 'byName') continue;
-        const color = o.properties?.find(p => p.id === 'color')?.value?.fixedColor;
+        const color = prop('color')?.fixedColor;
         if (typeof color === 'string') colorByName.set(o.matcher.options, color);
-        const lineStyle = o.properties?.find(p => p.id === 'custom.lineStyle')?.value as { fill?: string } | undefined;
-        if (lineStyle?.fill === 'dash') dashedNames.add(o.matcher.options);
+        if ((prop('custom.lineStyle') as { fill?: string } | undefined)?.fill === 'dash') dashedNames.add(o.matcher.options);
+        const unit = prop('unit');
+        if (typeof unit === 'string') unitByName.set(o.matcher.options, unit);
     }
 
+    const isMath = (t: GrafanaTarget) => (t.datasource as { type?: string } | undefined)?.type === '__expr__' && t.type === 'math';
     const queries: PanelQuery[] = (raw.targets ?? [])
-        .filter(t => typeof t.query === 'string' && t.query.trim())
-        .map(t => ({
-            refId: t.refId,
-            query: t.query!,
-            ...(t.alias ? { alias: t.alias } : {}),
-            ...(colorByName.has(t.alias ?? t.refId) ? { color: colorByName.get(t.alias ?? t.refId) } : {}),
-            ...(dashedNames.has(t.alias ?? t.refId) ? { dashed: true } : {}),
-            ...(t.hide ? { hidden: true } : {}),
-        }));
+        .filter(t => (typeof t.query === 'string' && t.query.trim()) || (isMath(t) && typeof t.expression === 'string'))
+        .map(t => {
+            const math = isMath(t);
+            const alias = math ? displayNameByRef.get(t.refId) : t.alias;
+            const name = alias ?? t.refId;
+            return {
+                refId: t.refId,
+                query: math ? String(t.expression) : t.query!,
+                ...(math ? { type: 'math' as const } : {}),
+                ...(alias ? { alias } : {}),
+                ...(colorByName.has(name) ? { color: colorByName.get(name) } : {}),
+                ...(dashedNames.has(name) ? { dashed: true } : {}),
+                ...(unitByName.has(name) ? { unit: unitByName.get(name) } : {}),
+                ...(t.hide ? { hidden: true } : {}),
+            };
+        });
 
     const defaults = raw.fieldConfig?.defaults;
     // Progi należą do domeny tylko, gdy są rysowane (domyślny szablon Grafany ma progi, ale ukryte)
@@ -133,6 +151,10 @@ export function panelToGrafana(panel: Panel): GrafanaPanel {
     const baseTargets = new Map((base.targets ?? []).map(t => [t.refId, t]));
     const targets: GrafanaTarget[] = p.queries.map(q => {
         const previous = baseTargets.get(q.refId);
+        if (q.type === 'math') {
+            // wyrażenie Grafany (Server Side Expression) - liczone po stronie Grafany z innych zapytań panelu
+            return { refId: q.refId, datasource: EXPRESSION_DS, type: 'math', expression: q.query, hide: q.hidden || undefined };
+        }
         return {
             ...previous,
             refId: q.refId,
@@ -146,18 +168,27 @@ export function panelToGrafana(panel: Panel): GrafanaPanel {
     });
 
     // Override'y serii (kolor, linia przerywana): zastępujemy te, którymi zarządza domena, resztę zostawiamy
-    const MANAGED_PROPS = new Set(['color', 'custom.lineStyle', 'custom.fillOpacity']);
+    const MANAGED_PROPS = new Set(['color', 'custom.lineStyle', 'custom.fillOpacity', 'unit', 'custom.axisPlacement', 'displayName']);
     const managedNames = new Set(p.queries.map(q => q.alias ?? q.refId));
-    const keptOverrides = (base.fieldConfig?.overrides ?? []).filter(o =>
-        !(o.matcher?.id === 'byName' && managedNames.has(o.matcher.options) && o.properties.every(pr => MANAGED_PROPS.has(pr.id)))
-    );
+    const managedRefs = new Set(p.queries.map(q => q.refId));
+    const keptOverrides = (base.fieldConfig?.overrides ?? []).filter(o => {
+        const managedMatcher = (o.matcher?.id === 'byName' && managedNames.has(o.matcher.options))
+            || (o.matcher?.id === 'byFrameRefID' && managedRefs.has(o.matcher.options));
+        return !(managedMatcher && o.properties.every(pr => MANAGED_PROPS.has(pr.id)));
+    });
+    // nazwa serii wyrażenia (Grafana nazywa ją refId) - override wyświetlanej nazwy
+    const nameOverrides: GrafanaOverride[] = p.queries
+        .filter(q => q.type === 'math' && q.alias)
+        .map(q => ({ matcher: { id: 'byFrameRefID', options: q.refId }, properties: [{ id: 'displayName', value: q.alias }] }));
     const colorOverrides: GrafanaOverride[] = p.queries
-        .filter(q => q.color || q.dashed)
+        .filter(q => q.color || q.dashed || (q.unit && q.unit !== p.unit))
         .map(q => ({
             matcher: { id: 'byName', options: q.alias ?? q.refId },
             properties: [
                 ...(q.color ? [{ id: 'color', value: { mode: 'fixed', fixedColor: q.color } }] : []),
                 ...(q.dashed ? [{ id: 'custom.lineStyle', value: { fill: 'dash', dash: [10, 10] } }, { id: 'custom.fillOpacity', value: 0 }] : []),
+                // inna jednostka niż panel - prawa oś Y
+                ...(q.unit && q.unit !== p.unit ? [{ id: 'unit', value: q.unit }, { id: 'custom.axisPlacement', value: 'right' }] : []),
             ],
         }));
 
@@ -196,7 +227,7 @@ export function panelToGrafana(panel: Panel): GrafanaPanel {
                     },
                 } : {}),
             },
-            overrides: [...keptOverrides, ...colorOverrides],
+            overrides: [...keptOverrides, ...nameOverrides, ...colorOverrides],
         },
     };
 }

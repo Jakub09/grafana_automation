@@ -4,6 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { ChartService } from '../../src/application/charting/chart.service';
 import { ReportService } from '../../src/application/reporting/report.service';
+import { statsTable } from '../../src/application/reporting/report-html';
+import { TimeRange } from '../../src/domain/shared/time-range';
 import { MeasurementSchema, MetricsRepository } from '../../src/domain/metrics/metrics.repository';
 import { TimeSeries } from '../../src/domain/metrics/time-series';
 import { PlannedDashboard } from '../../src/domain/provisioning/provisioning-planner';
@@ -202,4 +204,27 @@ test('Walidacja raportu: nieistniejący blueprint, ranking bez miejsca w szablon
         'Szablon odwołuje się do nieistniejącego rankingu: {{RANKING:inny}}',
         '"c": blueprint nie-ma nie istnieje',
     ]);
+});
+
+test('Wykres z wyrażeniem: składniki ukryte, C = $A / $B liczone lokalnie, inna jednostka na prawej osi', async () => {
+    const def = definition({
+        charts: [{ id: 'expr', title: 'Zajętość', unit: 'decgbytes', source: { type: 'queries', queries: [{ alias: 'x', query: 'SELECT rate=1 WHERE $timeFilter' }] } }],
+    });
+    const { service, writer } = setup(def, TEMPLATE);
+    // wykres z panelu: A (GB), B (GB, ukryte), C = A / B (percentunit)
+    const charts = (service as unknown as { charts: ChartService }).charts;
+    const range = TimeRange.lastHours(72);
+    const rendered = await charts.render({
+        title: 'P', range, grafanaUnit: 'decgbytes',
+        series: [
+            { refId: 'A', query: 'SELECT base=500 rate=0 WHERE $timeFilter', alias: 'USED.GB' },
+            { refId: 'B', query: 'SELECT base=2000 rate=0 WHERE $timeFilter', alias: 'TOTAL.GB', hidden: true },
+            { refId: 'C', query: '$A / $B', type: 'math', alias: 'Zajętość', unit: 'percentunit' },
+        ],
+    });
+    assert.deepEqual(rendered.chart.series.map(s => [s.label, s.axis]), [['USED.GB', 'left'], ['Zajętość', 'right']]);
+    assert.ok(rendered.chart.series[1].points.every(p => Math.abs(p.value - 0.25) < 1e-9));
+    assert.equal(rendered.chart.rightUnit, 'percentunit');
+    assert.deepEqual(statsTable(rendered).rows[1].slice(0, 2), ['Zajętość', '25%']);
+    void writer;
 });

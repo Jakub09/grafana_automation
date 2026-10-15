@@ -48,6 +48,31 @@ export class GrafanaAlertRuleRepository implements AlertRuleRepository {
         return alertRuleToDomain(raw);
     }
 
+    private groupPath(folderUid: string, group: string): string {
+        return `/v1/provisioning/folder/${encodeURIComponent(folderUid)}/rule-groups/${encodeURIComponent(group)}`;
+    }
+
+    public async getGroupInterval(folderUid: string, group: string): Promise<number | null> {
+        try {
+            const raw = await call('Grafana', `Pobranie grupy reguł ${group}`, () =>
+                this.client.legacyRead.get<{ interval?: number }>(this.groupPath(folderUid, group))
+            );
+            return typeof raw.interval === 'number' ? raw.interval : null;
+        } catch (error) {
+            if (error instanceof NotFoundError) return null;
+            throw error;
+        }
+    }
+
+    /** Grafana zmienia interwał zapisem całej grupy - pobieramy ją i odsyłamy z nowym interwałem (reguły bez zmian) */
+    public async setGroupInterval(folderUid: string, group: string, seconds: number): Promise<void> {
+        const path = this.groupPath(folderUid, group);
+        const current = await call('Grafana', `Pobranie grupy reguł ${group}`, () => this.client.legacyRead.get<Record<string, unknown>>(path));
+        await call('Grafana', `Interwał ewaluacji grupy ${group}: ${seconds} s`, () =>
+            this.client.legacyWrite.put(path, { ...current, interval: seconds }, WRITE_HEADERS)
+        );
+    }
+
     public async delete(uid: string): Promise<void> {
         await call('Grafana', `Usunięcie reguły ${uid}`, () =>
             this.client.legacyWrite.delete(`${BASE}/${encodeURIComponent(uid)}`, WRITE_HEADERS)

@@ -4,7 +4,7 @@ import { Panel, PanelQuery, refIdFor } from '../dashboard/panel';
 
 export type PlanActionType =
     | 'create-dashboard' | 'delete-dashboard'
-    | 'add-panel' | 'add-summary' | 'update-panel' | 'prune-series' | 'remove-panel' | 'relayout'
+    | 'add-panel' | 'add-summary' | 'update-panel' | 'prune-series' | 'remove-panel' | 'relayout' | 'update-rule-group'
     | 'create-rule' | 'update-rule' | 'delete-rule' | 'pause-rule' | 'resume-rule';
 
 export interface FieldChange {
@@ -59,6 +59,16 @@ export function diffQueries(current: readonly PanelQuery[], desired: readonly Pa
             if (target.color !== undefined && target.color !== q.color) {
                 changes.push({ field: `kolor "${key}"`, before: q.color ?? null, after: target.color });
                 style.color = target.color;
+            }
+            if ((target.type ?? null) !== (q.type ?? null)) {
+                changes.push({ field: `typ "${key}"`, before: q.type ?? 'influxdb', after: target.type ?? 'influxdb' });
+                style.type = target.type;
+            }
+            for (const field of ['unit', 'hidden'] as const) {
+                if (target[field] !== undefined && target[field] !== q[field]) {
+                    changes.push({ field: `${field === 'unit' ? 'jednostka' : 'ukryta'} "${key}"`, before: q[field] ?? null, after: target[field] });
+                    (style as Record<string, unknown>)[field] = target[field];
+                }
             }
             if (target.dashed !== undefined && target.dashed !== Boolean(q.dashed)) {
                 changes.push({ field: `linia przerywana "${key}"`, before: Boolean(q.dashed), after: target.dashed });
@@ -127,7 +137,7 @@ export function diffPanel(
 export const SUMMARY_FIELDS = PANEL_FIELDS;
 
 const RULE_FIELDS = [
-    'title', 'query', 'lookbackSeconds', 'pendingPeriod', 'labels', 'summary', 'receiver', 'showOnChart',
+    'title', 'query', 'nodes', 'conditionRefId', 'lookbackSeconds', 'pendingPeriod', 'labels', 'summary', 'receiver', 'notification', 'showOnChart',
 ] as const;
 
 /** Różnice między istniejącą regułą a regułą wyliczoną z blueprintu */
@@ -162,6 +172,7 @@ export function describeAction(action: PlanAction): string {
         'prune-series': 'usunięcie serii nieaktywnych',
         'remove-panel': 'usunięcie panelu',
         relayout: 'układ paneli',
+        'update-rule-group': 'interwał ewaluacji grupy reguł',
         'create-rule': 'nowa reguła',
         'update-rule': 'zmiana reguły',
         'delete-rule': 'usunięcie reguły',

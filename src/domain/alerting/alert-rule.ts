@@ -1,6 +1,7 @@
 import { ValidationError } from '../../shared/errors';
 import { Dashboard } from '../dashboard/dashboard';
 import { Panel } from '../dashboard/panel';
+import { MathExpression } from '../metrics/expression';
 
 export type Evaluator = 'gt' | 'lt';
 export type Reducer = 'last' | 'mean' | 'max' | 'min' | 'sum' | 'count';
@@ -14,6 +15,15 @@ export interface AlertCondition {
     threshold: number;
 }
 
+/** Ustawienia powiadomień reguły kierowanej wprost do contact pointu (receiver) - nadpisują politykę powiadomień */
+export interface NotificationSettings {
+    groupBy?: string[];
+    groupWait?: string;
+    groupInterval?: string;
+    repeatInterval?: string;
+    muteTimeIntervals?: string[];
+}
+
 /** Polityka alertowania wspólna dla wielu reguł (np. z blueprintu) */
 export interface AlertPolicy {
     condition: AlertCondition;
@@ -22,6 +32,18 @@ export interface AlertPolicy {
     ruleGroup: string;
     labels: Record<string, string>;
     receiver?: string;
+    notification?: NotificationSettings;
+}
+
+/**
+ * Węzeł danych reguły: zapytanie InfluxDB albo wyrażenie Grafany ("math", np. "$A / $B").
+ * Reguła z węzłami: węzły -> reduce(conditionRefId) -> threshold.
+ */
+export interface AlertNode {
+    refId: string;
+    /** InfluxQL albo, przy type "math", wyrażenie */
+    query: string;
+    type?: 'math';
 }
 
 export interface AlertRuleProps {
@@ -30,7 +52,12 @@ export interface AlertRuleProps {
     folderUid: string;
     ruleGroup: string;
     datasourceUid: string;
+    /** Zapytanie reguły; przy "nodes" - pierwsze zapytanie InfluxDB (do podglądu) */
     query: string;
+    /** Własne węzły danych (kilka zapytań, wyrażenia); bez nich - jedno zapytanie "query" */
+    nodes?: AlertNode[];
+    /** Węzeł, z którego liczony jest warunek (reduce -> próg); domyślnie ostatni */
+    conditionRefId?: string;
     lookbackSeconds: number;
     condition: AlertCondition;
     pendingPeriod: string;
@@ -39,7 +66,9 @@ export interface AlertRuleProps {
     labels: Record<string, string>;
     summary?: string;
     isPaused: boolean;
+    /** Contact point Grafany - reguła omija politykę powiadomień */
     receiver?: string;
+    notification?: NotificationSettings;
     noDataState: NoDataState;
     execErrState: ExecErrState;
     /**
@@ -60,13 +89,15 @@ export interface AlertRuleProps {
 }
 
 export type AlertRuleChanges = Partial<Pick<AlertRuleProps,
-    'title' | 'query' | 'lookbackSeconds' | 'condition' | 'pendingPeriod' | 'labels' | 'summary'
-    | 'receiver' | 'noDataState' | 'execErrState' | 'ruleGroup' | 'showOnChart'>>;
+    'title' | 'query' | 'nodes' | 'conditionRefId' | 'lookbackSeconds' | 'condition' | 'pendingPeriod' | 'labels' | 'summary'
+    | 'receiver' | 'notification' | 'noDataState' | 'execErrState' | 'ruleGroup' | 'showOnChart'>>;
 
 export interface PanelAlertContext {
     folderUid?: string;
     datasourceUid?: string;
     query?: string; // nadpisuje zapytanie panelu (np. wielowymiarowe GROUP BY tag)
+    nodes?: AlertNode[]; // własne węzły (kilka zapytań, wyrażenia) zamiast jednego zapytania
+    conditionRefId?: string;
     showOnChart?: boolean; // domyślnie true
     refId?: string; // które zapytanie panelu użyć (domyślnie pierwsze widoczne)
     title?: string;
@@ -94,7 +125,7 @@ export class AlertRule {
         if (ctx.refId && !sourceQuery) {
             throw new ValidationError(`Panel "${panel.title}" nie ma zapytania ${ctx.refId}`);
         }
-        const query = ctx.query ?? sourceQuery?.query;
+        const query = ctx.nodes?.find(n => n.type !== 'math')?.query ?? ctx.query ?? sourceQuery?.query;
         if (!query) {
             throw new ValidationError(`Panel "${panel.title}" nie ma zapytań, na których można oprzeć alert`);
         }
@@ -110,6 +141,7 @@ export class AlertRule {
             ruleGroup: policy.ruleGroup,
             datasourceUid,
             query,
+            ...(ctx.nodes?.length ? { nodes: ctx.nodes.map(n => ({ ...n })), conditionRefId: ctx.conditionRefId ?? ctx.nodes[ctx.nodes.length - 1].refId } : {}),
             lookbackSeconds: policy.lookbackSeconds,
             condition: { ...policy.condition },
             pendingPeriod: policy.pendingPeriod,
@@ -119,6 +151,7 @@ export class AlertRule {
             summary: ctx.summary,
             isPaused: false,
             receiver: policy.receiver,
+            ...(policy.receiver && policy.notification ? { notification: { ...policy.notification } } : {}),
             noDataState: 'NoData',
             execErrState: 'Error',
             showOnChart: ctx.showOnChart ?? true,
@@ -133,6 +166,24 @@ export class AlertRule {
         if (!p.query?.trim()) throw new ValidationError('Reguła alertu musi mieć zapytanie');
         if (!Number.isFinite(p.condition.threshold)) throw new ValidationError('Próg alertu musi być liczbą');
         if (!(p.lookbackSeconds > 0)) throw new ValidationError('lookbackSeconds musi być dodatnie');
+        if (p.nodes?.length) {
+            const refs = new Set<string>();
+            for (const n of p.nodes) {
+                if (!/^[A-Z][A-Z0-9_]*$/.test(n.refId)) throw new ValidationError(`Niepoprawny refId węzła reguły: "${n.refId}" (np. A, B, C)`);
+                if (refs.has(n.refId)) throw new ValidationError(`Zduplikowany refId węzła reguły: ${n.refId}`);
+                if (!n.query?.trim()) throw new ValidationError(`Węzeł ${n.refId} reguły jest pusty`);
+                refs.add(n.refId);
+            }
+            if (!p.nodes.some(n => n.type !== 'math')) throw new ValidationError('Reguła musi mieć co najmniej jedno zapytanie InfluxDB');
+            for (const n of p.nodes.filter(x => x.type === 'math')) {
+                for (const ref of new MathExpression(n.query).refs) {
+                    if (!refs.has(ref)) throw new ValidationError(`Wyrażenie ${n.refId} ("${n.query}") odwołuje się do nieistniejącego węzła ${ref}`);
+                }
+            }
+            if (p.conditionRefId && !refs.has(p.conditionRefId)) {
+                throw new ValidationError(`Warunek reguły wskazuje nieistniejący węzeł ${p.conditionRefId}`);
+            }
+        }
         if (!DURATION.test(p.pendingPeriod)) {
             throw new ValidationError(`Niepoprawny czas oczekiwania "${p.pendingPeriod}" (np. "5m", "1h")`);
         }
@@ -192,6 +243,11 @@ export class AlertRule {
     }
 
     public toProps(): AlertRuleProps {
-        return { ...this.props, condition: { ...this.props.condition }, labels: { ...this.props.labels } };
+        return {
+            ...this.props,
+            condition: { ...this.props.condition },
+            labels: { ...this.props.labels },
+            ...(this.props.nodes ? { nodes: this.props.nodes.map(n => ({ ...n })) } : {}),
+        };
     }
 }

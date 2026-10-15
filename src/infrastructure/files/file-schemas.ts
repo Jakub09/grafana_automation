@@ -146,6 +146,24 @@ export type ReportFile = z.infer<typeof reportFileSchema>;
 
 // --- Blueprinty: blueprints/<nazwa>.json ---
 
+const refId = z.string().regex(/^[A-Z][A-Z0-9_]*$/, 'Wielkie litery, np. "A", "B", "C"');
+const oneSource = (q: { query?: string; expression?: string }) => Boolean(q.query) !== Boolean(q.expression);
+const ONE_SOURCE = { message: 'Podaj dokładnie jedno z pól: "query" (InfluxQL) albo "expression" (wyrażenie, np. "$A / $B")' };
+
+/** Zapytanie panelu w blueprincie: InfluxQL albo wyrażenie Grafany (Math) */
+const panelQuery = (dashedByDefault: boolean) => z.object({
+    refId: refId.optional().describe('Identyfikator zapytania - wyrażenia odwołują się do niego ($A, $B)'),
+    alias: z.string().min(1).optional().describe('Nazwa serii w legendzie; wzorce {dashboard} {panel}'),
+    query: z.string().min(1).optional().describe('Zapytanie InfluxQL; znaczniki jak w "queries" ({where} = dashboard + panel + filtry), '
+        + 'makra $timeFilter i $__interval'),
+    expression: z.string().min(1).optional()
+        .describe('Wyrażenie Grafany (Server Side Expression "Math"), np. "$A / $B", "($A - $B) / 1024", "$A / $B * 100"'),
+    color: z.string().optional().describe('Kolor: nazwa z Grafany (red, orange...) lub #RRGGBB'),
+    dashed: z.boolean().default(dashedByDefault).describe('Linia przerywana bez wypełnienia'),
+    unit: z.string().optional().describe('Jednostka tej serii, gdy inna niż panelu (np. "percentunit" dla $A / $B) - rysowana na prawej osi'),
+    hidden: z.boolean().optional().describe('Zapytanie liczone, ale nierysowane (np. składnik wyrażenia)'),
+}).strict().refine(oneSource, ONE_SOURCE);
+
 const tagFilter = z.object({
     include: z.array(z.string()).optional().describe('Tylko te wartości (wzorce z *, np. "LPAR*")'),
     exclude: z.array(z.string()).optional().describe('Pomiń te wartości (wzorce z *, np. "TEST*")'),
@@ -183,14 +201,13 @@ export const blueprintFileSchema = z.object({
     }).strict().optional()
         .describe('Układ paneli na dashboardzie; panel podsumowania jest zawsze na całą szerokość na górze. '
             + 'Z "provision apply --update" także istniejące dashboardy są przestawiane.'),
-    extraQueries: z.array(z.object({
-        alias: z.string().min(1).describe('Nazwa serii w legendzie; wzorce {dashboard} {panel}'),
-        query: z.string().min(1).describe('Zapytanie InfluxQL; znaczniki jak w "queries" ({where} = dashboard + panel + filtry), '
-            + 'makra $timeFilter i $__interval'),
-        color: z.string().optional().describe('Kolor: nazwa z Grafany (red, orange...) lub #RRGGBB'),
-        dashed: z.boolean().default(true).describe('Linia przerywana bez wypełnienia (domyślnie tak - np. próg)'),
-    }).strict()).optional()
-        .describe('Dodatkowe zapytania w każdym panelu, po seriach - np. próg liczony z pojemności: 90% TOTAL.GB danego SG'),
+    panelQueries: z.array(panelQuery(false).refine(q => q.refId, { message: 'W panelQueries każde zapytanie musi mieć "refId"' }))
+        .min(1).optional()
+        .describe('Własna lista zapytań każdego panelu ZAMIAST serii generowanych z grouping.seriesTag / pól. '
+            + 'Zapytania InfluxDB ("query") i wyrażenia Grafany ("expression": "$A / $B"); znaczniki jak w "queries".'),
+    extraQueries: z.array(panelQuery(true)).optional()
+        .describe('Dodatkowe zapytania w każdym panelu, po seriach - np. próg liczony z pojemności (90% TOTAL.GB) '
+            + 'albo wyrażenie z serii panelu ("expression": "$B / $A")'),
     folderUid: z.string().optional().describe('Folder Grafany (domyślnie GRAFANA_FOLDER_UID)'),
     dashboardTitle: z.string().default('{dashboard} - {measurement}').describe('Wzorce: {measurement} {dashboard}'),
     panelTitle: z.string().default('{dashboard} / {panel}').describe('Wzorce: {measurement} {dashboard} {panel}'),
@@ -232,8 +249,28 @@ export const blueprintFileSchema = z.object({
         ruleGroup: z.string().min(1),
         severity: z.string().default('warning'),
         labels: z.record(z.string()).default({}),
-        receiver: z.string().optional().describe('Contact point Grafany (domyślnie wg polityki powiadomień)'),
-    }).strict().optional(),
+        receiver: z.string().optional()
+            .describe('Contact point Grafany, do którego reguły wysyłają powiadomienia (z pominięciem polityki powiadomień); '
+                + 'bez niego - wg polityki powiadomień'),
+        notification: z.object({
+            groupBy: z.array(z.string()).optional().describe('Grupowanie alertów w jedno powiadomienie, np. ["alertname", "grafana_folder"]'),
+            groupWait: duration.optional().describe('Czekanie na kolejne alerty grupy przed pierwszym powiadomieniem, np. "30s"'),
+            groupInterval: duration.optional().describe('Odstęp powiadomień o zmianach w grupie, np. "5m"'),
+            repeatInterval: duration.optional().describe('Przypomnienie o wciąż aktywnym alercie, np. "4h"'),
+            muteTimeIntervals: z.array(z.string()).optional().describe('Okna wyciszenia (mute timings) z Grafany'),
+        }).strict().optional().describe('Ustawienia powiadomień dla "receiver" (wymaga receiver)'),
+        evaluationInterval: z.string().regex(/^\d+[smh]$/, 'Np. "30s", "1m", "5m"').optional()
+            .describe('Jak często Grafana sprawdza reguły - interwał grupy reguł (folder + ruleGroup), wielokrotność 10 s. '
+                + 'pendingPeriod musi być jego wielokrotnością. Bez tego - domyślny interwał Grafany (1m przy nowej grupie).'),
+        queries: z.array(z.object({
+            refId,
+            query: z.string().min(1).optional().describe('Zapytanie InfluxQL; znaczniki jak w "queries.alert" ({where}, {interval})'),
+            expression: z.string().min(1).optional().describe('Wyrażenie Grafany, np. "$A / $B"'),
+        }).strict().refine(oneSource, ONE_SOURCE)).min(1).optional()
+            .describe('Własne węzły reguły zamiast jednego zapytania: np. A (USED.GB), B (TOTAL.GB), C = "$A / $B". '
+                + 'Warunek (reducer + próg) liczony jest z węzła conditionRefId (domyślnie ostatniego).'),
+        conditionRefId: refId.optional().describe('Węzeł, z którego liczony jest warunek (domyślnie ostatni z "queries")'),
+    }).strict().refine(a => !a.notification || a.receiver, { message: 'alert.notification wymaga alert.receiver (contact pointu)' }).optional(),
 }).strict().refine(b => Boolean(b.field) !== Boolean(b.fields), {
     message: 'Podaj dokładnie jedno z pól: "field" albo "fields"',
 });

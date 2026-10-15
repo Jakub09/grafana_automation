@@ -1,13 +1,16 @@
 import { GridLayout } from '../dashboard/grid-layout';
-import { AlertPolicy } from '../alerting/alert-rule';
+import { AlertNode, AlertPolicy } from '../alerting/alert-rule';
 import { NewPanel } from '../dashboard/dashboard';
-import { refIdFor } from '../dashboard/panel';
+import { PanelQuery, refIdFor } from '../dashboard/panel';
 import { SchemaTree } from '../metrics/schema-tree';
-import { Blueprint } from './blueprint';
+import { Blueprint, ExtraQuery } from './blueprint';
 
 export interface PlannedAlert {
     policy: AlertPolicy;
     query: string;
+    /** Własne węzły reguły (kilka zapytań, wyrażenia) i węzeł warunku */
+    nodes?: AlertNode[];
+    conditionRefId?: string;
     title: string;
     summary: string;
     showOnChart: boolean;
@@ -37,6 +40,20 @@ export interface PlannedDashboard {
     /** Układ z blueprintu; bez niego - domyślne dokładanie po 2 w wierszu, bez przestawiania istniejących */
     layout?: GridLayout;
     active: boolean;
+}
+
+/** Zapytanie z blueprintu -> zapytanie panelu (tylko ustawione pola) */
+function toPanelQuery(q: ExtraQuery, refId: string): PanelQuery {
+    return {
+        refId,
+        query: q.query,
+        ...(q.type ? { type: q.type } : {}),
+        ...(q.alias ? { alias: q.alias } : {}),
+        ...(q.color ? { color: q.color } : {}),
+        ...(q.dashed ? { dashed: true } : {}),
+        ...(q.unit ? { unit: q.unit } : {}),
+        ...(q.hidden ? { hidden: true } : {}),
+    };
 }
 
 /**
@@ -79,32 +96,36 @@ export function planProvisioning(tree: SchemaTree, blueprint: Blueprint, datasou
                 : blueprint.seriesMode === 'fields' ? [...blueprint.fields] : [];
             const series: (string | undefined)[] = seriesNames.length ? seriesNames : [undefined];
 
+            // własne zapytania panelu (panelQueries) zastępują serie generowane z tagu / pól
+            const custom = blueprint.panelQueriesFor(group.name, panelGroup.name);
             const panel: NewPanel = {
                 title,
                 datasourceUid,
                 unit,
                 axisLabel,
                 ...spanNulls,
-                queries: series.map((s, i) => ({
-                    refId: refIdFor(i),
-                    query: blueprint.panelQuery(group.name, panelGroup.name, s),
-                    alias: blueprint.seriesAliasFor(group.name, panelGroup.name, s),
-                })),
+                queries: custom
+                    ? custom.map((q, i) => toPanelQuery(q, q.refId ?? refIdFor(i)))
+                    : series.map((s, i) => ({
+                        refId: refIdFor(i),
+                        query: blueprint.panelQuery(group.name, panelGroup.name, s),
+                        alias: blueprint.seriesAliasFor(group.name, panelGroup.name, s),
+                    })),
             };
-            const inactiveSeries = panelGroup.series.filter(s => !panelGroup.activeSeries.includes(s));
-            // dodatkowe zapytania (np. próg) po seriach; refId za seriami nieaktywnymi, żeby się nie powtarzały
-            const extraStart = series.length + inactiveSeries.length;
-            panel.queries.push(...blueprint.extraQueriesFor(group.name, panelGroup.name).map((q, i) => ({
-                refId: refIdFor(extraStart + i),
-                query: q.query,
-                alias: q.alias,
-                ...(q.color ? { color: q.color } : {}),
-                ...(q.dashed ? { dashed: true } : {}),
-            })));
+            const inactiveSeries = custom ? [] : panelGroup.series.filter(s => !panelGroup.activeSeries.includes(s));
+            // dodatkowe zapytania (np. próg) na końcu; bez własnego refId - kolejna wolna litera (za seriami nieaktywnymi)
+            const used = new Set([...panel.queries.map(q => q.refId), ...inactiveSeries.map((_, i) => refIdFor(series.length + i))]);
+            let next = 0;
+            for (const q of blueprint.extraQueriesFor(group.name, panelGroup.name)) {
+                let refId = q.refId;
+                while (!refId || used.has(refId)) refId = refIdFor(next++);
+                used.add(refId);
+                panel.queries.push(toPanelQuery(q, refId));
+            }
             const planned = {
                 name: panelGroup.name,
                 panel,
-                inactiveQueries: panelGroup.active && blueprint.seriesMode === 'tag'
+                inactiveQueries: !custom && panelGroup.active && blueprint.seriesMode === 'tag'
                     ? inactiveSeries.map((s, i) => ({
                         refId: refIdFor(series.length + i),
                         query: blueprint.panelQuery(group.name, panelGroup.name, s),
@@ -120,11 +141,13 @@ export function planProvisioning(tree: SchemaTree, blueprint: Blueprint, datasou
 
             const severity = (alert.labels.severity ?? 'alert').toUpperCase();
             const { condition } = alert;
+            const nodes = blueprint.alertNodesFor(group.name, panelGroup.name);
             return {
                 ...planned,
                 alert: {
                     policy: alert,
-                    query: blueprint.alertQuery(group.name, panelGroup.name),
+                    query: nodes?.find(n => n.type !== 'math')?.query ?? blueprint.alertQuery(group.name, panelGroup.name),
+                    ...(nodes ? { nodes, conditionRefId: alert.conditionRefId ?? nodes[nodes.length - 1].refId } : {}),
                     title: `[${severity}] ${title}`,
                     summary: `${title}: ${condition.reducer} ${condition.evaluator === 'gt' ? '>' : '<'} ${condition.threshold}`,
                     showOnChart: blueprint.alertShownOnChart,

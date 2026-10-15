@@ -41,6 +41,16 @@ export class InMemoryDashboards implements DashboardRepository {
 export class InMemoryAlertRules implements AlertRuleRepository {
     private readonly store: AlertRule[] = [];
     private nextId = 1;
+    /** Interwały grup (folder/grupa); grupa istnieje, gdy ma regułę albo ustawiony interwał */
+    readonly groupIntervals = new Map<string, number>();
+    async getGroupInterval(folderUid: string, group: string) {
+        const key = `${folderUid}/${group}`;
+        if (this.groupIntervals.has(key)) return this.groupIntervals.get(key)!;
+        return this.store.some(r => r.toProps().folderUid === folderUid && r.toProps().ruleGroup === group) ? 60 : null;
+    }
+    async setGroupInterval(folderUid: string, group: string, seconds: number) {
+        this.groupIntervals.set(`${folderUid}/${group}`, seconds);
+    }
     get items(): AlertRule[] {
         return this.store.map(copyRule);
     }

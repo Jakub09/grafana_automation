@@ -1,9 +1,15 @@
 import { ValidationError } from '../../shared/errors';
+import { MathExpression } from '../metrics/expression';
 import { GRID_COLUMNS, GridPosition } from './grid-layout';
 
 export interface PanelQuery {
     refId: string;
-    query: string; // InfluxQL z makrami Grafany
+    /** InfluxQL z makrami Grafany; przy type "math" - wyrażenie, np. "$A / $B" */
+    query: string;
+    /** math - wyrażenie Grafany (Server Side Expression) liczone z innych zapytań panelu */
+    type?: 'math';
+    /** Jednostka tej serii, gdy inna niż panelu (np. percentunit przy panelu w GB) - prawa oś Y */
+    unit?: string;
     alias?: string;
     color?: string; // kolor serii (nazwa Grafany lub hex)
     /** Linia przerywana bez wypełnienia (np. seria progu) */
@@ -85,6 +91,11 @@ export class Panel {
             if (refIds.has(q.refId)) throw new ValidationError(`Zduplikowany refId zapytania: ${q.refId}`);
             if (!q.query?.trim()) throw new ValidationError(`Zapytanie ${q.refId} jest puste`);
             refIds.add(q.refId);
+        }
+        for (const q of p.queries.filter(x => x.type === 'math')) {
+            for (const ref of new MathExpression(q.query).refs) {
+                if (!refIds.has(ref)) throw new ValidationError(`Wyrażenie ${q.refId} ("${q.query}") odwołuje się do nieistniejącego zapytania ${ref}`);
+            }
         }
     }
 

@@ -150,11 +150,16 @@
       "additionalProperties": false,
       "description": "Układ paneli na dashboardzie; panel podsumowania jest zawsze na całą szerokość na górze. Z \"provision apply --update\" także istniejące dashboardy są przestawiane."
     },
-    "extraQueries": {
+    "panelQueries": {
       "type": "array",
       "items": {
         "type": "object",
         "properties": {
+          "refId": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]*$",
+            "description": "Identyfikator zapytania - wyrażenia odwołują się do niego ($A, $B)"
+          },
           "alias": {
             "type": "string",
             "minLength": 1,
@@ -165,6 +170,59 @@
             "minLength": 1,
             "description": "Zapytanie InfluxQL; znaczniki jak w \"queries\" ({where} = dashboard + panel + filtry), makra $timeFilter i $__interval"
           },
+          "expression": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Wyrażenie Grafany (Server Side Expression \"Math\"), np. \"$A / $B\", \"($A - $B) / 1024\", \"$A / $B * 100\""
+          },
+          "color": {
+            "type": "string",
+            "description": "Kolor: nazwa z Grafany (red, orange...) lub #RRGGBB"
+          },
+          "dashed": {
+            "type": "boolean",
+            "default": false,
+            "description": "Linia przerywana bez wypełnienia"
+          },
+          "unit": {
+            "type": "string",
+            "description": "Jednostka tej serii, gdy inna niż panelu (np. \"percentunit\" dla $A / $B) - rysowana na prawej osi"
+          },
+          "hidden": {
+            "type": "boolean",
+            "description": "Zapytanie liczone, ale nierysowane (np. składnik wyrażenia)"
+          }
+        },
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "description": "Własna lista zapytań każdego panelu ZAMIAST serii generowanych z grouping.seriesTag / pól. Zapytania InfluxDB (\"query\") i wyrażenia Grafany (\"expression\": \"$A / $B\"); znaczniki jak w \"queries\"."
+    },
+    "extraQueries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "refId": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]*$",
+            "description": "Identyfikator zapytania - wyrażenia odwołują się do niego ($A, $B)"
+          },
+          "alias": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Nazwa serii w legendzie; wzorce {dashboard} {panel}"
+          },
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Zapytanie InfluxQL; znaczniki jak w \"queries\" ({where} = dashboard + panel + filtry), makra $timeFilter i $__interval"
+          },
+          "expression": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Wyrażenie Grafany (Server Side Expression \"Math\"), np. \"$A / $B\", \"($A - $B) / 1024\", \"$A / $B * 100\""
+          },
           "color": {
             "type": "string",
             "description": "Kolor: nazwa z Grafany (red, orange...) lub #RRGGBB"
@@ -172,16 +230,20 @@
           "dashed": {
             "type": "boolean",
             "default": true,
-            "description": "Linia przerywana bez wypełnienia (domyślnie tak - np. próg)"
+            "description": "Linia przerywana bez wypełnienia"
+          },
+          "unit": {
+            "type": "string",
+            "description": "Jednostka tej serii, gdy inna niż panelu (np. \"percentunit\" dla $A / $B) - rysowana na prawej osi"
+          },
+          "hidden": {
+            "type": "boolean",
+            "description": "Zapytanie liczone, ale nierysowane (np. składnik wyrażenia)"
           }
         },
-        "required": [
-          "alias",
-          "query"
-        ],
         "additionalProperties": false
       },
-      "description": "Dodatkowe zapytania w każdym panelu, po seriach - np. próg liczony z pojemności: 90% TOTAL.GB danego SG"
+      "description": "Dodatkowe zapytania w każdym panelu, po seriach - np. próg liczony z pojemności (90% TOTAL.GB) albo wyrażenie z serii panelu (\"expression\": \"$B / $A\")"
     },
     "folderUid": {
       "type": "string",
@@ -385,7 +447,81 @@
         },
         "receiver": {
           "type": "string",
-          "description": "Contact point Grafany (domyślnie wg polityki powiadomień)"
+          "description": "Contact point Grafany, do którego reguły wysyłają powiadomienia (z pominięciem polityki powiadomień); bez niego - wg polityki powiadomień"
+        },
+        "notification": {
+          "type": "object",
+          "properties": {
+            "groupBy": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Grupowanie alertów w jedno powiadomienie, np. [\"alertname\", \"grafana_folder\"]"
+            },
+            "groupWait": {
+              "type": "string",
+              "pattern": "^(\\d+(ms|s|m|h|d|w))+$",
+              "description": "Czekanie na kolejne alerty grupy przed pierwszym powiadomieniem, np. \"30s\""
+            },
+            "groupInterval": {
+              "type": "string",
+              "pattern": "^(\\d+(ms|s|m|h|d|w))+$",
+              "description": "Odstęp powiadomień o zmianach w grupie, np. \"5m\""
+            },
+            "repeatInterval": {
+              "type": "string",
+              "pattern": "^(\\d+(ms|s|m|h|d|w))+$",
+              "description": "Przypomnienie o wciąż aktywnym alercie, np. \"4h\""
+            },
+            "muteTimeIntervals": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Okna wyciszenia (mute timings) z Grafany"
+            }
+          },
+          "additionalProperties": false,
+          "description": "Ustawienia powiadomień dla \"receiver\" (wymaga receiver)"
+        },
+        "evaluationInterval": {
+          "type": "string",
+          "pattern": "^\\d+[smh]$",
+          "description": "Jak często Grafana sprawdza reguły - interwał grupy reguł (folder + ruleGroup), wielokrotność 10 s. pendingPeriod musi być jego wielokrotnością. Bez tego - domyślny interwał Grafany (1m przy nowej grupie)."
+        },
+        "queries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "refId": {
+                "type": "string",
+                "pattern": "^[A-Z][A-Z0-9_]*$"
+              },
+              "query": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Zapytanie InfluxQL; znaczniki jak w \"queries.alert\" ({where}, {interval})"
+              },
+              "expression": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Wyrażenie Grafany, np. \"$A / $B\""
+              }
+            },
+            "required": [
+              "refId"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1,
+          "description": "Własne węzły reguły zamiast jednego zapytania: np. A (USED.GB), B (TOTAL.GB), C = \"$A / $B\". Warunek (reducer + próg) liczony jest z węzła conditionRefId (domyślnie ostatniego)."
+        },
+        "conditionRefId": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]*$",
+          "description": "Węzeł, z którego liczony jest warunek (domyślnie ostatni z \"queries\")"
         }
       },
       "required": [

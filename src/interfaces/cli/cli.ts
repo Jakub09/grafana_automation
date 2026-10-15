@@ -266,7 +266,7 @@ async function provisionCommand(c: Container, command: string | undefined, name:
 const ACTION_ICON: Record<PlanAction['type'], string> = {
     'create-dashboard': '+', 'add-panel': '+', 'add-summary': '+', 'create-rule': '+',
     'update-panel': '~', 'update-rule': '~', 'prune-series': '-',
-    'remove-panel': '-', 'delete-rule': '-', 'delete-dashboard': '-', relayout: '~',
+    'remove-panel': '-', 'delete-rule': '-', 'delete-dashboard': '-', relayout: '~', 'update-rule-group': '~',
     'pause-rule': '‖', 'resume-rule': '▶',
 };
 

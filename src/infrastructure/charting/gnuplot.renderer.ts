@@ -28,9 +28,13 @@ export class GnuplotChartRenderer implements ChartRenderer {
     private buildScript(chart: Chart, series: readonly ChartSeries[], outputPath: string): string {
         const divider = chart.valueDivider;
         const plotSpecs = series.flatMap(s => {
-            const line = `'-' using 1:($2/${divider}) with lines lw ${s.style.width} dt ${s.style.dashed ? 2 : 1} lc rgb "${s.color}" title "${q(s.label)}"`;
+            // prawa oś: wartości w jednostce rightUnit (bez przeliczania GB -> TB), np. percentunit * 100
+            const right = s.axis === 'right';
+            const value = right ? `($2*${chart.rightScale})` : `($2/${divider})`;
+            const axes = right ? ' axes x1y2' : '';
+            const line = `'-' using 1:${value}${axes} with lines lw ${s.style.width} dt ${s.style.dashed ? 2 : 1} lc rgb "${s.color}" title "${q(s.label)}"`;
             return s.style.fill
-                ? [`'-' using 1:($2/${divider}) with filledcurves y1=0 fs transparent solid 0.25 noborder lc rgb "${s.color}" notitle`, line]
+                ? [`'-' using 1:${value}${axes} with filledcurves y1=0 fs transparent solid 0.25 noborder lc rgb "${s.color}" notitle`, line]
                 : [line];
         }).join(', \\\n     ');
 
@@ -49,6 +53,7 @@ export class GnuplotChartRenderer implements ChartRenderer {
                 ? [`set yrange [${chart.yMin !== undefined ? chart.yMin / divider : '*'}:${chart.yMax !== undefined ? chart.yMax / divider : '*'}]`]
                 : []),
             `set ylabel "${q(chart.yAxisTitle)}"`,
+            ...(chart.hasRightAxis ? ['set y2tics', `set y2label "${q(chart.rightAxisTitle)}"`, 'set y2range [0:*]'] : []),
             'set grid xtics ytics lc rgb "#E5E7EB" lw 1 lt 1',
             ...chart.markers.flatMap((m, i) => {
                 const t = formatDataTimestamp(new Date(m.timestamp));
@@ -61,7 +66,7 @@ export class GnuplotChartRenderer implements ChartRenderer {
                     `set label ${i + 1} "${q(m.label)}" at "${t}", graph ${(0.96 - i * 0.05).toFixed(2)} ${align} front tc rgb "${m.color}" font ",10"`,
                 ];
             }),
-            'set border 3 lc rgb "#9CA3AF"',
+            `set border ${chart.hasRightAxis ? 11 : 3} lc rgb "#9CA3AF"`,
             'set tics nomirror',
             'set key outside bottom center horizontal',
             `plot ${plotSpecs}`,

@@ -18,6 +18,8 @@ export interface ChartSeries {
     derived: boolean;
     /** Nie rysowana (np. zastąpiona średnią kroczącą), ale nadal liczona w statystykach */
     hidden: boolean;
+    /** right - seria w jednostce prawej osi (rightUnit), np. procent przy wykresie w GB */
+    axis: 'left' | 'right';
 }
 
 /** Pionowy znacznik chwili na osi czasu (np. moment przekroczenia progu) */
@@ -38,6 +40,8 @@ export interface ChartOptions {
     /** Stały zakres osi Y w jednostkach danych (np. 0-100 dla procentów) */
     yMin?: number;
     yMax?: number;
+    /** Jednostka Grafany prawej osi Y (serie z axis "right") */
+    rightUnit?: string;
 }
 
 const SOURCE_STYLE: SeriesStyle = { fill: true, dashed: false, width: 2 };
@@ -54,6 +58,7 @@ export class Chart {
     readonly height: number;
     readonly yMin?: number;
     readonly yMax?: number;
+    readonly rightUnit?: string;
     private _xRange?: { from: number; to: number };
     private readonly _series: ChartSeries[] = [];
     private readonly _notes: string[] = [];
@@ -71,6 +76,7 @@ export class Chart {
         this._xRange = options.xRange && { ...options.xRange };
         this.yMin = options.yMin;
         this.yMax = options.yMax;
+        this.rightUnit = options.rightUnit;
     }
 
     /** Dodaje serię; bez koloru (lub z nieznanym) dostaje kolejny kolor palety */
@@ -78,7 +84,7 @@ export class Chart {
         label: string,
         points: readonly DataPoint[],
         color?: string | null,
-        options: { style?: Partial<SeriesStyle>; derived?: boolean } = {},
+        options: { style?: Partial<SeriesStyle>; derived?: boolean; axis?: 'left' | 'right' } = {},
     ): void {
         const resolved = resolveColor(color) ?? CLASSIC_PALETTE[this._series.length % CLASSIC_PALETTE.length];
         const derived = options.derived ?? false;
@@ -89,6 +95,7 @@ export class Chart {
             style: { ...(derived ? DERIVED_STYLE : SOURCE_STYLE), ...options.style },
             derived,
             hidden: false,
+            axis: options.axis ?? 'left',
         });
     }
 
@@ -144,10 +151,24 @@ export class Chart {
         return this.sourceSeries.every(s => s.points.length === 0);
     }
 
-    /** Jednostka wyświetlana, dobrana do największej wartości (GB -> TB -> PB) */
+    /** Czy wykres ma prawą oś Y */
+    public get hasRightAxis(): boolean {
+        return this.visibleSeries.some(s => s.axis === 'right');
+    }
+
+    /** Mnożnik wartości prawej osi do wyświetlenia (percentunit 0-1 -> 0-100%) */
+    public get rightScale(): number {
+        return this.rightUnit === 'percentunit' ? 100 : 1;
+    }
+
+    public get rightAxisTitle(): string {
+        return this.rightUnit === 'percent' || this.rightUnit === 'percentunit' ? '[%]' : this.rightUnit ? `[${this.rightUnit}]` : '';
+    }
+
+    /** Jednostka wyświetlana lewej osi, dobrana do największej wartości (GB -> TB -> PB) */
     public get displayUnits(): Units {
         let max = 0;
-        for (const s of this.visibleSeries) {
+        for (const s of this.visibleSeries.filter(x => x.axis === 'left')) {
             for (const p of s.points) max = Math.max(max, p.value);
         }
         return displayUnitsFor(this.baseUnits, max);

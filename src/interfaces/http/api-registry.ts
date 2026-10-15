@@ -2,7 +2,7 @@ import { RequestHandler, Router } from 'express';
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 
-type Method = 'get' | 'post' | 'patch' | 'delete';
+type Method = 'get' | 'post' | 'put' | 'patch' | 'delete';
 
 /** Opis trasy - z niego powstaje dokumentacja OpenAPI (GET /api/openapi.json, Swagger UI: /api/docs) */
 export interface RouteDoc {
@@ -35,6 +35,7 @@ export class DocumentedRouter {
 
     public get(path: string, doc: RouteDoc, ...handlers: RequestHandler[]): this { return this.add('get', path, doc, handlers); }
     public post(path: string, doc: RouteDoc, ...handlers: RequestHandler[]): this { return this.add('post', path, doc, handlers); }
+    public put(path: string, doc: RouteDoc, ...handlers: RequestHandler[]): this { return this.add('put', path, doc, handlers); }
     public patch(path: string, doc: RouteDoc, ...handlers: RequestHandler[]): this { return this.add('patch', path, doc, handlers); }
     public delete(path: string, doc: RouteDoc, ...handlers: RequestHandler[]): this { return this.add('delete', path, doc, handlers); }
 

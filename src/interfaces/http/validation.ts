@@ -37,11 +37,20 @@ export const updateDashboardSchema = z.object({
 
 const panelQuerySchema = z.object({
     refId: z.string().min(1).optional(),
-    query: z.string().min(1),
+    query: z.string().min(1).describe('InfluxQL albo, przy type "math", wyrażenie Grafany, np. "$A / $B"'),
+    type: z.literal('math').optional().describe('math - wyrażenie Grafany (Server Side Expression) liczone z innych zapytań'),
     alias: z.string().optional(),
     color: z.string().optional(),
+    dashed: z.boolean().optional(),
+    unit: z.string().optional().describe('Jednostka serii, gdy inna niż panelu - prawa oś Y'),
     hidden: z.boolean().optional(),
 });
+
+const alertNodes = z.array(z.object({
+    refId: z.string().regex(/^[A-Z][A-Z0-9_]*$/),
+    query: z.string().min(1).describe('InfluxQL albo, przy type "math", wyrażenie, np. "$A / $B"'),
+    type: z.literal('math').optional(),
+}).strict()).min(1);
 
 /** Zapytania bez refId dostają kolejne litery A, B, C... */
 const queriesSchema = z.array(panelQuerySchema).min(1).transform(queries =>
@@ -92,6 +101,9 @@ export const createAlertRuleSchema = z.object({
     refId: z.string().min(1).optional(),
     query: z.string().min(1).optional(),
     showOnChart: z.boolean().optional(),
+    nodes: alertNodes.optional().describe('Własne węzły: zapytania i wyrażenia, np. A, B, C = "$A / $B"'),
+    nodesFromPanel: z.boolean().optional().describe('Węzły = wszystkie zapytania panelu (także wyrażenia)'),
+    conditionRefId: z.string().optional().describe('Węzeł warunku (domyślnie ostatni)'),
 }).strict();
 
 export const updateAlertRuleSchema = z.object({
@@ -107,6 +119,12 @@ export const updateAlertRuleSchema = z.object({
     summary: z.string().optional(),
     receiver: z.string().min(1).optional(),
     showOnChart: z.boolean().optional(),
+    nodes: alertNodes.optional(),
+    conditionRefId: z.string().optional(),
+}).strict();
+
+export const groupIntervalSchema = z.object({
+    interval: z.string().regex(/^\d+[smh]$/, 'Np. "30s", "1m", "5m"').describe('Interwał ewaluacji, np. "1m"'),
 }).strict();
 
 export const alertRuleFilterSchema = z.object({

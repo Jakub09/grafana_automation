@@ -123,3 +123,35 @@ test('Dodatkowe zapytania panelu (extraQueries): np. próg 90% pojemności jako 
     assert.equal(planned.panel.queries[2].query, 'SELECT mean("VAL") * 0.9 FROM "M" WHERE "LPAR" = \'L1\' AND "SGN" = \'SG1\' '
         + 'AND "MTYPE" =~ /^(?:TOTAL\\.GB|USED\\.GB)$/ AND "MTYPE" = \'TOTAL.GB\' AND $timeFilter GROUP BY time($__interval)');
 });
+
+test('panelQueries i alert.queries: C = A (USED.GB) / B (TOTAL.GB) w panelu i w regule alertu', () => {
+    const q = (mtype: string) => `SELECT mean("VAL") FROM "M" WHERE {where} AND "MTYPE" = '${mtype}' AND $timeFilter GROUP BY time({interval}) fill(none)`;
+    const blueprint = new Blueprint({
+        ...base,
+        grouping: { dashboardTag: 'LPAR', panelTag: 'SGN' },
+        panelQueries: [
+            { refId: 'A', alias: 'USED.GB', query: q('USED.GB').replace('{interval}', '$__interval') },
+            { refId: 'B', alias: 'TOTAL.GB', query: q('TOTAL.GB').replace('{interval}', '$__interval') },
+            { refId: 'C', alias: 'Zajętość', query: '$A / $B', type: 'math', unit: 'percentunit' },
+        ],
+        alert: {
+            condition: { threshold: 0.9, evaluator: 'gt', reducer: 'last' }, pendingPeriod: '5m', lookbackSeconds: 3600, interval: '5m',
+            ruleGroup: 'g', labels: { severity: 'warning' },
+            queries: [{ refId: 'A', query: q('USED.GB') }, { refId: 'B', query: q('TOTAL.GB') }, { refId: 'C', query: '$A / $B', type: 'math' }],
+        },
+    });
+    const tree = SchemaTree.fromSeriesKeys('M', ['M,LPAR=L1,MTYPE=USED.GB,SGN=SG1'], blueprint.grouping);
+    const [{ panels: [planned] }] = planProvisioning(tree, blueprint, 'ds');
+
+    assert.deepEqual(planned.panel.queries.map(x => [x.refId, x.type ?? 'influx', x.alias, x.unit ?? null]), [
+        ['A', 'influx', 'USED.GB', null], ['B', 'influx', 'TOTAL.GB', null], ['C', 'math', 'Zajętość', 'percentunit'],
+    ]);
+    assert.match(planned.panel.queries[0].query, /"LPAR" = 'L1' AND "SGN" = 'SG1' AND "MTYPE" = 'USED.GB'/);
+    assert.deepEqual(planned.alert!.nodes!.map(n => [n.refId, n.type ?? 'influx']), [['A', 'influx'], ['B', 'influx'], ['C', 'math']]);
+    assert.match(planned.alert!.nodes![1].query, /"SGN" = 'SG1' AND "MTYPE" = 'TOTAL.GB' .*GROUP BY time\(5m\)/);
+    assert.equal(planned.alert!.conditionRefId, 'C');
+    assert.equal(planned.alert!.showOnChart, false); // próg 0,9 nie jest w jednostkach wykresu (GB)
+
+    assert.throws(() => new Blueprint({ ...blueprint.props, panelQueries: [{ refId: 'A', query: '$A / $Z', type: 'math' }] }), /nieistniejącego Z/);
+    assert.throws(() => new Blueprint({ ...blueprint.props, alert: { ...blueprint.props.alert!, conditionRefId: 'X' } }), /conditionRefId/);
+});

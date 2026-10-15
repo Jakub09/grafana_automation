@@ -6,7 +6,8 @@ import { baseUnitsFromGrafana, formatValue } from '../../domain/charting/units';
 import { Panel } from '../../domain/dashboard/panel';
 import { MetricsRepository } from '../../domain/metrics/metrics.repository';
 import { QueryTemplate } from '../../domain/metrics/query-template';
-import { computeStats, DataPoint, SeriesStats } from '../../domain/metrics/time-series';
+import { MathExpression } from '../../domain/metrics/expression';
+import { computeStats, DataPoint, SeriesStats, TimeSeries } from '../../domain/metrics/time-series';
 import { TimeRange } from '../../domain/shared/time-range';
 import { NoDataError } from '../../shared/errors';
 import { elapsedMs, logger } from '../../shared/logger';
@@ -17,7 +18,15 @@ import { ChartAnalysis } from './analysis';
 import { createAnalysis } from './analyses';
 
 export interface SeriesSpec {
+    /** Identyfikator zapytania - wyrażenia "math" odwołują się do niego ($A) */
+    refId?: string;
+    /** InfluxQL albo, przy type "math", wyrażenie Grafany, np. "$A / $B" */
     query: string;
+    type?: 'math';
+    /** Jednostka serii, gdy inna niż wykresu - prawa oś Y */
+    unit?: string;
+    /** Pobierane / liczone, ale nierysowane (np. składniki wyrażenia) */
+    hidden?: boolean;
     alias?: string;
     color?: string | null;
     /** Linia przerywana bez wypełnienia (np. próg z zapytania) */
@@ -53,6 +62,7 @@ export interface LabeledSeries {
     points: readonly DataPoint[];
     color: string | null;
     dashed?: boolean;
+    unit?: string;
 }
 
 export interface RenderedChart {
@@ -102,7 +112,10 @@ export class ChartService {
             grafanaUnit: panel.unit,
             fixedColor: panel.fixedColor,
             datasourceUid: panel.datasourceUid,
-            series: panel.visibleQueries.map(q => ({ query: q.query, alias: q.alias, color: q.color, dashed: q.dashed })),
+            // także ukryte - mogą być składnikami wyrażeń; rysowane są tylko widoczne
+            series: panel.queries.map(q => ({
+                refId: q.refId, query: q.query, type: q.type, alias: q.alias, color: q.color, dashed: q.dashed, unit: q.unit, hidden: q.hidden,
+            })),
             yMin: panel.min,
             yMax: panel.max,
             // progi panelu (jak w Grafanie) jako linie na wykresie
@@ -123,24 +136,38 @@ export class ChartService {
     private async querySeries(
         spec: Pick<ChartSpec, 'series' | 'interval' | 'fixedColor'>, range: TimeRange, database: string | undefined,
     ): Promise<LabeledSeries[]> {
-        const results = await mapLimit(spec.series, QUERY_CONCURRENCY,
-            s => this.metrics.query(new QueryTemplate(s.query).render(range, spec.interval), database));
+        // 1. Zapytania InfluxDB; 2. wyrażenia "math" liczone z ich wyników (kolejno - mogą korzystać z wcześniejszych)
+        const results = new Array<TimeSeries[]>(spec.series.length);
+        const influx = spec.series.map((s, i) => ({ s, i })).filter(({ s }) => s.type !== 'math');
+        await mapLimit(influx, QUERY_CONCURRENCY, async ({ s, i }) => {
+            results[i] = await this.metrics.query(new QueryTemplate(s.query).render(range, spec.interval), database);
+        });
+        const byRef = new Map<string, TimeSeries[]>();
+        spec.series.forEach((s, i) => { if (s.refId && results[i]) byRef.set(s.refId, results[i]); });
+        spec.series.forEach((s, i) => {
+            if (s.type !== 'math') return;
+            results[i] = new MathExpression(s.query).apply(byRef);
+            if (s.refId) byRef.set(s.refId, results[i]);
+        });
 
+        const visible = spec.series.filter(s => !s.hidden);
         const labeled: LabeledSeries[] = [];
         results.forEach((seriesList, i) => {
             const s = spec.series[i];
+            if (s.hidden) return;
             const multi = seriesList.length > 1;
-            const aliasHasTags = /\$tag_|\[\[tag_/.test(s.alias ?? '');
+            const alias = s.alias ?? (s.type === 'math' ? s.refId : undefined);
+            const aliasHasTags = /\$tag_|\[\[tag_/.test(alias ?? '');
 
             for (const ts of seriesList) {
                 if (ts.isEmpty) continue;
-                let label = ts.label(s.alias);
+                let label = ts.label(alias);
                 // Zapytanie z GROUP BY tag zwraca kilka serii - rozróżniamy je wartościami tagów
-                if (multi && s.alias && !aliasHasTags) {
+                if (multi && alias && !aliasHasTags) {
                     label = `${label} (${Object.values(ts.tags).join(', ')})`;
                 }
-                const single = spec.series.length === 1 && !multi;
-                labeled.push({ label, points: ts.points, color: s.color ?? (single ? spec.fixedColor ?? null : null), dashed: s.dashed });
+                const single = visible.length === 1 && !multi;
+                labeled.push({ label, points: ts.points, color: s.color ?? (single ? spec.fixedColor ?? null : null), dashed: s.dashed, unit: s.unit });
             }
         });
         return labeled;
@@ -156,11 +183,15 @@ export class ChartService {
             xRange: { from: spec.range.from.getTime(), to: spec.range.to.getTime() },
             yMin: spec.yMin,
             yMax: spec.yMax,
+            rightUnit: spec.series.find(s => !s.hidden && s.unit && s.unit !== spec.grafanaUnit)?.unit,
         });
 
         const database = spec.database ?? await this.databases?.databaseFor(spec.datasourceUid);
         for (const s of await this.querySeries(spec, spec.range, database)) {
-            chart.addSeries(s.label, s.points, s.color, s.dashed ? { style: { dashed: true, fill: false } } : {});
+            chart.addSeries(s.label, s.points, s.color, {
+                ...(s.dashed ? { style: { dashed: true, fill: false } } : {}),
+                axis: s.unit && s.unit !== spec.grafanaUnit ? 'right' : 'left',
+            });
         }
         if (chart.isEmpty) return { chart };
 
@@ -181,7 +212,7 @@ export class ChartService {
                     if (!prev?.points.length) continue;
                     // przesunięte na oś czasu bieżącego okresu, ta sama barwa, linia przerywana
                     chart.addSeries(`${src.label} (${label})`, prev.points.map(p => ({ timestamp: p.timestamp + offset, value: p.value })),
-                        src.color, { derived: true, style: { dashed: true, width: 1.5, fill: false } });
+                        src.color, { derived: true, style: { dashed: true, width: 1.5, fill: false }, axis: src.axis });
                 }
             }
         }

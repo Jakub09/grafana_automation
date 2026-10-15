@@ -11,4 +11,7 @@ export interface AlertRuleRepository {
     create(rule: AlertRule): Promise<AlertRule>;
     update(rule: AlertRule): Promise<AlertRule>;
     delete(uid: string): Promise<void>;
+    /** Interwał ewaluacji grupy reguł (folder + grupa) w sekundach; null - grupa nie istnieje */
+    getGroupInterval(folderUid: string, group: string): Promise<number | null>;
+    setGroupInterval(folderUid: string, group: string, seconds: number): Promise<void>;
 }

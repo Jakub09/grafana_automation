@@ -2,6 +2,7 @@ import { escapeHtml } from '../../domain/notification/html-template';
 import { AttentionItem } from '../../domain/reporting/attention';
 import { RankingMetric, RankingRow } from '../../domain/reporting/ranking';
 import { formatDisplayDay } from '../../shared/time-format';
+import { formatValue } from '../../domain/charting/units';
 import { RenderedChart } from '../charting/chart.service';
 
 const fmt = (value: number) => {
@@ -41,13 +42,16 @@ export function statsTable(rendered: RenderedChart): { headers: string[]; rows: 
             ...(comparison ? [`Średnia (${comparison.label})${units}`, 'Zmiana średniej'] : []),
         ],
         rows: rendered.stats.map(({ label, stats }) => {
-            const base = stats ? [stats.last, stats.min, stats.max, stats.avg].map(v => fmt(v / divider)) : ['brak danych', '', '', ''];
+            // seria prawej osi (inna jednostka, np. %) - wartości z jej jednostką zamiast przeliczenia GB -> TB
+            const right = chart.series.find(s => s.label === label && !s.derived)?.axis === 'right';
+            const show = (v: number) => (right ? formatValue(v, chart.rightUnit) : fmt(v / divider));
+            const base = stats ? [stats.last, stats.min, stats.max, stats.avg].map(show) : ['brak danych', '', '', ''];
             if (!comparison) return [label, ...base];
             const prev = previous.get(label);
             const change = stats && prev
                 ? `${signed((stats.avg - prev.avg) / divider)}${prev.avg !== 0 ? ` (${percent(((stats.avg - prev.avg) / Math.abs(prev.avg)) * 100)})` : ''}`
                 : '–';
-            return [label, ...base, prev ? fmt(prev.avg / divider) : 'brak danych', change];
+            return [label, ...base, prev ? show(prev.avg) : 'brak danych', change];
         }),
     };
 }

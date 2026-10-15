@@ -60,7 +60,12 @@ export function drawChart(ctx: CanvasRenderingContext2D, chart: Chart, box: Box,
     // 1. Serie przeliczone na jednostkę wyświetlaną
     const divider = chart.valueDivider;
     const series = chart.visibleSeries
-        .map(sr => ({ ...sr, points: sr.points.map(p => ({ t: p.timestamp, v: p.value / divider })) }));
+        .map(sr => ({
+            ...sr,
+            // prawa oś: wartości w jednostce rightUnit (np. percentunit * 100), bez przeliczania GB -> TB
+            points: sr.points.map(p => ({ t: p.timestamp, v: sr.axis === 'right' ? p.value * chart.rightScale : p.value / divider })),
+        }));
+    const hasRight = series.some(sr => sr.axis === 'right');
 
     // 2. Legenda (może zająć kilka wierszy) - od niej zależy dolny margines
     ctx.font = `${fontSize}px ${font}`;
@@ -80,19 +85,24 @@ export function drawChart(ctx: CanvasRenderingContext2D, chart: Chart, box: Box,
 
     const padding = {
         top: (showTitle ? 60 : 20) * s,
-        right: 30 * s,
+        right: (hasRight ? 80 : 30) * s,
         bottom: 56 * s + rows.length * rowHeight,
         left: 90 * s,
     };
 
     // 3. Ekstrema osi X i Y
-    let minX = Infinity, maxX = -Infinity, minY = 0, maxY = -Infinity;
+    let minX = Infinity, maxX = -Infinity, minY = 0, maxY = -Infinity, maxRight = -Infinity, minRight = 0;
     for (const sr of series) {
         for (const p of sr.points) {
             minX = Math.min(minX, p.t);
             maxX = Math.max(maxX, p.t);
-            minY = Math.min(minY, p.v);
-            maxY = Math.max(maxY, p.v);
+            if (sr.axis === 'right') {
+                minRight = Math.min(minRight, p.v);
+                maxRight = Math.max(maxRight, p.v);
+            } else {
+                minY = Math.min(minY, p.v);
+                maxY = Math.max(maxY, p.v);
+            }
         }
     }
     if (chart.xRange) {
@@ -116,6 +126,12 @@ export function drawChart(ctx: CanvasRenderingContext2D, chart: Chart, box: Box,
     const graphHeight = height - padding.top - padding.bottom;
     const toX = (t: number) => padding.left + ((t - minX) / rangeX) * graphWidth;
     const toY = (v: number) => padding.top + graphHeight - ((v - minY) / rangeY) * graphHeight;
+    // prawa oś: własna skala z okrągłymi podziałkami, od 0
+    if (!Number.isFinite(maxRight) || maxRight <= minRight) maxRight = minRight + 1;
+    const rightStep = niceStep((maxRight - minRight) * 1.05);
+    const rightMax = Math.ceil(maxRight * 1.02 / rightStep) * rightStep;
+    const rightMin = Math.floor(minRight / rightStep) * rightStep;
+    const toYRight = (v: number) => padding.top + graphHeight - ((v - rightMin) / (rightMax - rightMin)) * graphHeight;
 
     // 4. Tytuł
     if (showTitle) {
@@ -140,6 +156,23 @@ export function drawChart(ctx: CanvasRenderingContext2D, chart: Chart, box: Box,
         ctx.lineTo(padding.left + graphWidth, y);
         ctx.stroke();
         ctx.fillText(val.toLocaleString('pl-PL', { minimumFractionDigits: decimals, maximumFractionDigits: decimals }), padding.left - 8 * s, y);
+    }
+    if (hasRight) {
+        ctx.textAlign = 'left';
+        const rightDecimals = decimalsFor(rightStep);
+        for (let val = rightMin; val <= rightMax + rightStep / 1000; val += rightStep) {
+            ctx.fillText(val.toLocaleString('pl-PL', { minimumFractionDigits: rightDecimals, maximumFractionDigits: rightDecimals }),
+                padding.left + graphWidth + 8 * s, toYRight(val));
+        }
+        if (chart.rightAxisTitle) {
+            ctx.save();
+            ctx.translate(width - 16 * s, padding.top + graphHeight / 2);
+            ctx.rotate(Math.PI / 2);
+            ctx.textAlign = 'center';
+            ctx.fillText(chart.rightAxisTitle, 0, 0);
+            ctx.restore();
+        }
+        ctx.textAlign = 'right';
     }
     if (chart.yAxisTitle) {
         ctx.save();
@@ -169,7 +202,8 @@ export function drawChart(ctx: CanvasRenderingContext2D, chart: Chart, box: Box,
     // 7. Serie danych: wypełnienie gradientem, linia, kropki
     const baseY = toY(Math.max(minY, 0));
     for (const sr of series) {
-        const pts = sr.points.map(p => ({ x: toX(p.t), y: toY(p.v) }));
+        const yOf = sr.axis === 'right' ? toYRight : toY;
+        const pts = sr.points.map(p => ({ x: toX(p.t), y: yOf(p.v) }));
 
         if (sr.style.fill) {
             const gradient = ctx.createLinearGradient(0, padding.top, 0, padding.top + graphHeight);

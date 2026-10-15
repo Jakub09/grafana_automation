@@ -241,16 +241,48 @@ export class ProvisioningService {
     }
 
     public async apply(name: string, options: ProvisioningOptions = {}): Promise<ProvisioningResult[]> {
-        const { folderUid, datasourceUid, plan } = await this.load(name);
+        const { blueprint, folderUid, datasourceUid, plan } = await this.load(name);
         const ctx: ApplyContext = {
             folderUid, datasourceUid, now: new Date(),
             dryRun: Boolean(options.dryRun), update: Boolean(options.update), prune: Boolean(options.prune),
         };
+        // interwał grupy przed zmianami (null - grupa jeszcze nie istnieje i powstanie z pierwszą regułą)
+        const interval = blueprint.evaluationIntervalSeconds;
+        const ruleGroup = blueprint.alert?.ruleGroup;
+        const intervalBefore = interval && ruleGroup ? await this.alertRules.getGroupInterval(folderUid, ruleGroup) : null;
+
         const results: ProvisioningResult[] = [];
         for (const planned of plan) {
             results.push(await this.applyDashboard(planned, Dashboard.uidFor(folderUid, planned.title), ctx));
         }
+        if (interval && ruleGroup) {
+            const group = await this.syncGroupInterval(folderUid, ruleGroup, interval, intervalBefore, results, ctx);
+            if (group) results.push(group);
+        }
         return results;
+    }
+
+    /**
+     * Interwał ewaluacji grupy reguł blueprintu: nowa grupa (utworzona w tym przebiegu) dostaje go od razu,
+     * zmiana istniejącej - z --update.
+     */
+    private async syncGroupInterval(
+        folderUid: string, ruleGroup: string, seconds: number, before: number | null, results: ProvisioningResult[], ctx: ApplyContext,
+    ): Promise<ProvisioningResult | null> {
+        const created = results.some(r => r.alertRulesCreated > 0);
+        if (before === seconds || (before === null && !created)) return null;
+        const title = `Grupa reguł ${ruleGroup}`;
+        const { result, record } = this.resultFor({ name: ruleGroup, title, tags: [], panels: [], active: true }, `${folderUid}/${ruleGroup}`, ctx.dryRun);
+        const fmt = (s: number | null) => (s === null ? '(nowa grupa)' : s % 60 === 0 ? `${s / 60}m` : `${s}s`);
+        const apply = record({
+            type: 'update-rule-group',
+            target: `${ruleGroup} (folder ${folderUid})`,
+            changes: [{ field: 'interval', before: before === null ? null : fmt(before), after: fmt(seconds) }],
+            skipped: before !== null && !ctx.update ? NEEDS_UPDATE : undefined,
+        });
+        if (apply && !ctx.dryRun) await this.alertRules.setGroupInterval(folderUid, ruleGroup, seconds);
+        result.status = apply ? 'updated' : 'unchanged';
+        return result;
     }
 
     private datasourceOf(blueprint: Blueprint): string | undefined {
@@ -535,6 +567,8 @@ export class ProvisioningService {
             folderUid: ctx.folderUid,
             datasourceUid: ctx.datasourceUid,
             query: alert.query,
+            nodes: alert.nodes,
+            conditionRefId: alert.conditionRefId,
             title: alert.title,
             summary: alert.summary,
             showOnChart: alert.showOnChart,

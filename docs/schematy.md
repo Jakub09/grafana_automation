@@ -76,6 +76,7 @@ panel. Zawsze go sprawdź i dodaj sekcję `alert`, jeśli schemat ma mieć alert
 | `unit` | – | jednostka Grafany, np. `decgbytes` (wykresy w mailach przeliczają GB → TB → PB), `percent` |
 | `axisLabel`, `tags` | – | opis osi Y, tagi dashboardu |
 | `queries.panel`, `queries.alert` | – | własne szablony zapytań (niżej) |
+| `panelQueries` | – | **własna lista zapytań panelu** (z `refId`), także wyrażenia `$A / $B` ([niżej](#wyrażenia-i-własne-zapytania-w-panelach-panelqueries)) |
 | `connectNulls` | – | Grafana *Connect null values* w panelach i podsumowaniu: `true` = *Always*, `false` = *Never*, `"1h"` = *Threshold* (łączy przerwy krótsze niż 1 h). Bez klucza ustawienie w Grafanie się nie zmienia. Istniejące panele zmienia `provision apply --update`. Wykresy w mailach i raportach zawsze łączą linię nad pustymi kubełkami |
 | `layout` | – | układ paneli: `{ "panelsPerRow": 3, "panelHeight": 8 }` ([niżej](#układ-paneli-layout)) |
 | `extraQueries` | – | dodatkowe zapytania w każdym panelu, np. linia progu ([niżej](#dodatkowe-zapytania-w-panelu-extraqueries)) |
@@ -97,8 +98,83 @@ panel. Zawsze go sprawdź i dodaj sekcję `alert`, jeśli schemat ma mieć alert
 | `ruleGroup` | – (wymagany) | grupa reguł w Grafanie |
 | `severity` | `warning` | etykieta `severity`, widoczna w tytule reguły i mailu (`[WARNING] ...`) |
 | `labels` | `{}` | dodatkowe etykiety (np. do routingu w politykach powiadomień Grafany) |
-| `receiver` | – | konkretny contact point; domyślnie decyduje polityka powiadomień |
-| `showOnChart` | tak, chyba że jest `queries.alert` | linia progu i moment przekroczenia na wykresie w mailu (wyłącz, gdy alert liczy co innego niż panel) |
+| `receiver` | – | **contact point** Grafany, do którego reguły wysyłają powiadomienia (z pominięciem polityki powiadomień); domyślnie decyduje polityka |
+| `notification` | – | ustawienia powiadomień dla `receiver`: `groupBy` (np. `["alertname"]`), `groupWait`, `groupInterval`, `repeatInterval` (np. `"12h"`), `muteTimeIntervals` (nazwy *mute timings*) |
+| `evaluationInterval` | – (Grafana: `1m` dla nowej grupy) | **jak często Grafana sprawdza reguły**, np. `"30s"`, `"1m"`, `"5m"`; wielokrotność 10 s |
+| `queries`, `conditionRefId` | – | **własne węzły reguły**: kilka zapytań i wyrażeń ([niżej](#wyrażenia-i-własne-zapytania-w-regułach-alertów)) |
+| `showOnChart` | tak, chyba że jest `queries.alert` / `alert.queries` | linia progu i moment przekroczenia na wykresie w mailu (wyłącz, gdy alert liczy co innego niż panel) |
+
+**Interwał ewaluacji** w Grafanie dotyczy całej grupy reguł (folder + `ruleGroup`), a nie pojedynczej reguły.
+Nowa grupa (utworzona przez `apply`) dostaje go od razu, a zmiana istniejącej wymaga `apply --update` (plan pokazuje
+`interwał ewaluacji grupy reguł: 1m -> 30s`). Grafana wymaga, żeby `pendingPeriod` był wielokrotnością interwału,
+co aplikacja sprawdza przy wczytaniu blueprintu. Interwał można też zmienić przez API:
+`PUT /api/alert-rules/groups/<folderUid>/<grupa>` z treścią `{"interval": "30s"}`.
+
+**Contact point:** nazwa musi istnieć w Grafanie (*Alerting → Contact points*). Przykład:
+
+```json
+"alert": {
+  "threshold": 0.9,
+  "ruleGroup": "mf-storage",
+  "receiver": "storage-team",
+  "notification": { "groupBy": ["alertname", "grafana_folder"], "repeatInterval": "12h" },
+  "evaluationInterval": "1m"
+}
+```
+
+### Wyrażenia i własne zapytania w panelach (`panelQueries`)
+
+`panelQueries` to lista zapytań każdego panelu, która **zastępuje** serie generowane z `grouping.seriesTag` / pól.
+Każde zapytanie ma `refId` i albo `query` (InfluxQL), albo `expression`, czyli wyrażenie Grafany
+(*Server Side Expression „Math”*) liczone z innych zapytań panelu:
+
+```json
+"panelQueries": [
+  { "refId": "A", "alias": "USED.GB",  "query": "SELECT mean(\"VAL\") FROM \"MF.STG.SPACE\" WHERE {where} AND \"MTYPE\" = 'USED.GB' AND $timeFilter GROUP BY time($__interval) fill(null)" },
+  { "refId": "B", "alias": "TOTAL.GB", "query": "SELECT mean(\"VAL\") FROM \"MF.STG.SPACE\" WHERE {where} AND \"MTYPE\" = 'TOTAL.GB' AND $timeFilter GROUP BY time($__interval) fill(null)" },
+  { "refId": "C", "alias": "Zajętość", "expression": "$A / $B", "unit": "percentunit" }
+]
+```
+
+| Klucz | Znaczenie |
+|---|---|
+| `refId` | identyfikator; wyrażenia odwołują się do niego: `$A`, `${A}` |
+| `query` / `expression` | InfluxQL (znaczniki jak w `queries`) **albo** wyrażenie: `+ - * /`, nawiasy, liczby, np. `$A / $B`, `($A - $B) / 1024`, `$A / $B * 100` |
+| `alias` | nazwa serii w legendzie (dla wyrażenia to *display name* w Grafanie) |
+| `unit` | jednostka serii, gdy inna niż panelu: seria idzie na **prawą oś Y** (np. `percentunit` = ułamek 0–1 pokazany jako %) |
+| `hidden` | zapytanie liczone, ale nierysowane, np. składniki wyrażenia |
+| `color`, `dashed` | kolor i linia przerywana |
+
+Wyrażenia mogą być też w `extraQueries` (np. `{ "alias": "Wolne", "expression": "$B - $A" }`). Wykresy w mailach
+i raportach liczą wyrażenia tak samo jak Grafana (punkt po punkcie, dla wspólnych chwil serii; serie z
+`GROUP BY` tagu łączone po tagach) i rysują serie z inną jednostką na prawej osi.
+
+### Wyrażenia i własne zapytania w regułach alertów
+
+Zamiast jednego zapytania reguła może mieć kilka węzłów, a warunek (reducer + próg) jest liczony z wybranego:
+
+```json
+"alert": {
+  "threshold": 0.9,
+  "reducer": "last",
+  "ruleGroup": "mf-storage",
+  "queries": [
+    { "refId": "A", "query": "SELECT mean(\"VAL\") FROM \"MF.STG.SPACE\" WHERE \"LPAR\" = '{dashboard}' AND \"SGN\" = '{panel}' AND \"MTYPE\" = 'USED.GB' AND $timeFilter GROUP BY time({interval}) fill(none)" },
+    { "refId": "B", "query": "SELECT mean(\"VAL\") FROM \"MF.STG.SPACE\" WHERE \"LPAR\" = '{dashboard}' AND \"SGN\" = '{panel}' AND \"MTYPE\" = 'TOTAL.GB' AND $timeFilter GROUP BY time({interval}) fill(none)" },
+    { "refId": "C", "expression": "$A / $B" }
+  ],
+  "conditionRefId": "C"
+}
+```
+
+W Grafanie powstaje reguła `A`, `B` (InfluxDB) → `C` (*Math* `$A / $B`) → `D` (*Reduce* `last`) → `E` (*Threshold* `> 0.9`).
+Mail z alertem pokazuje wartość z `D`, czyli np. `0,93`. Znaczniki w zapytaniach: `{dashboard}`, `{panel}`, `{where}`,
+`{interval}` (`alert.interval`). Zapytania alertu używają `fill(none)`, żeby puste kubełki nie dawały „brak danych”.
+Gdy próg nie jest w jednostce wykresu panelu, ustaw `"showOnChart": false`. Przy `alert.queries` to ustawienie
+jest domyślne.
+
+Przez API regułę z węzłami tworzy `POST /api/dashboards/<uid>/panels/<id>/alert-rules` z `"nodes": [...]` albo
+`"nodesFromPanel": true`. Ta druga opcja bierze wszystkie zapytania panelu razem z wyrażeniami.
 
 ### Panel podsumowania (`summaryPanel`)
 

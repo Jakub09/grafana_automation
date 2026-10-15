@@ -1,6 +1,8 @@
 import { GridLayout } from '../dashboard/grid-layout';
 import { ValidationError } from '../../shared/errors';
-import { AlertPolicy } from '../alerting/alert-rule';
+import { AlertNode, AlertPolicy } from '../alerting/alert-rule';
+import { MathExpression } from '../metrics/expression';
+import { parseDurationMs } from '../shared/time-range';
 import { quoteIdentifier, quoteString } from '../metrics/influxql';
 import { SchemaGrouping } from '../metrics/schema-tree';
 
@@ -9,6 +11,11 @@ export type Aggregation = 'mean' | 'max' | 'min' | 'last' | 'sum';
 export interface BlueprintAlert extends AlertPolicy {
     interval: string; // GROUP BY time(...) w zapytaniu alertu
     field?: string; // pole alertu (domyślnie pierwsze z "fields")
+    /** Własne węzły reguły (szablony): kilka zapytań i wyrażenia, np. C = $A / $B; warunek liczony z conditionRefId */
+    queries?: AlertNode[];
+    conditionRefId?: string;
+    /** Interwał ewaluacji grupy reguł (np. "1m"); w Grafanie dotyczy całej grupy (folder + ruleGroup) */
+    evaluationInterval?: string;
     /** Rysuj próg i moment przekroczenia na wykresie w mailu; domyślnie tak, chyba że alert ma własne zapytanie */
     showOnChart?: boolean;
 }
@@ -55,10 +62,17 @@ export interface SummaryPanel {
  * Znaczniki jak w queries: {measurement} {field} {aggregation} {dashboard} {panel} {where} {interval}.
  */
 export interface ExtraQuery {
-    alias: string;
+    /** Wymagany w panelQueries (wyrażenia odwołują się do niego: $A); w extraQueries - kolejna wolna litera */
+    refId?: string;
+    alias?: string;
+    /** InfluxQL (szablon ze znacznikami) albo, przy type "math", wyrażenie Grafany, np. "$A / $B" */
     query: string;
+    type?: 'math';
     color?: string;
     dashed?: boolean;
+    /** Jednostka serii, gdy inna niż panelu - prawa oś Y */
+    unit?: string;
+    hidden?: boolean;
 }
 
 export interface BlueprintProps {
@@ -76,6 +90,8 @@ export interface BlueprintProps {
     queries: BlueprintQueries;
     /** Dodatkowe zapytania dokładane do każdego panelu po seriach (np. próg) */
     extraQueries?: ExtraQuery[];
+    /** Własna lista zapytań panelu zamiast generowanych serii (z refId; także wyrażenia math) */
+    panelQueries?: ExtraQuery[];
     folderUid?: string;
     // Wzorce tytułów: {measurement}, {dashboard}, {panel}, {series}
     dashboardTitle: string;
@@ -123,10 +139,45 @@ export class Blueprint {
         if (props.alert?.field && !props.fields.includes(props.alert.field)) {
             throw new ValidationError(`alert.field "${props.alert.field}" nie należy do pól blueprintu`);
         }
+        Blueprint.checkExpressions('panelQueries', props.panelQueries ?? []);
+        const alertNodes = props.alert?.queries ?? [];
+        Blueprint.checkExpressions('alert.queries', alertNodes);
+        if (alertNodes.length && !alertNodes.some(n => n.type !== 'math')) {
+            throw new ValidationError('alert.queries musi zawierać co najmniej jedno zapytanie InfluxDB ("query")');
+        }
+        if (props.alert?.conditionRefId && !alertNodes.some(n => n.refId === props.alert!.conditionRefId)) {
+            throw new ValidationError(`alert.conditionRefId "${props.alert.conditionRefId}" nie wskazuje żadnego z alert.queries`);
+        }
+        for (const q of (props.extraQueries ?? []).filter(x => x.type === 'math')) new MathExpression(q.query);
+        if (props.alert?.evaluationInterval) {
+            const interval = parseDurationMs(props.alert.evaluationInterval);
+            if (interval < 10_000 || interval % 10_000 !== 0) {
+                throw new ValidationError(`alert.evaluationInterval "${props.alert.evaluationInterval}" musi być wielokrotnością 10 s (np. "30s", "1m", "5m")`);
+            }
+            const pending = parseDurationMs(props.alert.pendingPeriod);
+            if (pending % interval !== 0) {
+                throw new ValidationError(`alert.pendingPeriod "${props.alert.pendingPeriod}" musi być wielokrotnością interwału ewaluacji `
+                    + `"${props.alert.evaluationInterval}" (wymaganie Grafany)`);
+            }
+        }
         this.filters = Object.entries(props.filters).map(([tag, f]) => [tag, {
             include: (f.include ?? []).map(globToRegExp),
             exclude: (f.exclude ?? []).map(globToRegExp),
         }]);
+    }
+
+    /** Unikalne refId i wyrażenia odwołujące się do istniejących zapytań */
+    private static checkExpressions(where: string, queries: readonly { refId?: string; query: string; type?: 'math' }[]): void {
+        const refs = new Set<string>();
+        for (const q of queries) {
+            if (q.refId && refs.has(q.refId)) throw new ValidationError(`${where}: zduplikowany refId ${q.refId}`);
+            if (q.refId) refs.add(q.refId);
+        }
+        for (const q of queries.filter(x => x.type === 'math')) {
+            for (const ref of new MathExpression(q.query).refs) {
+                if (!refs.has(ref)) throw new ValidationError(`${where}: wyrażenie "${q.query}" odwołuje się do nieistniejącego ${ref}`);
+            }
+        }
     }
 
     public get name(): string { return this.props.name; }
@@ -138,7 +189,7 @@ export class Blueprint {
 
     /** Próg alertu ma te same jednostki co wykres panelu (własne zapytanie alertu - np. procent - zwykle nie) */
     public get alertShownOnChart(): boolean {
-        return this.props.alert?.showOnChart ?? !this.props.queries.alert;
+        return this.props.alert?.showOnChart ?? !(this.props.queries.alert || this.props.alert?.queries?.length);
     }
 
     public get seriesMode(): SeriesMode {
@@ -197,6 +248,12 @@ export class Blueprint {
             ]);
     }
 
+    /** Interwał ewaluacji grupy reguł w sekundach (undefined - bez zmian w Grafanie) */
+    public get evaluationIntervalSeconds(): number | undefined {
+        const value = this.props.alert?.evaluationInterval;
+        return value ? parseDurationMs(value) / 1000 : undefined;
+    }
+
     public get layout(): GridLayout | undefined {
         return this.props.layout;
     }
@@ -232,11 +289,29 @@ export class Blueprint {
 
     /** Dodatkowe zapytania panelu (np. próg) z podstawionymi znacznikami */
     public extraQueriesFor(dashboard: string, panel: string): ExtraQuery[] {
+        return this.fillQueries(this.props.extraQueries ?? [], dashboard, panel);
+    }
+
+    /** Własne zapytania panelu (zamiast serii) albo undefined, gdy blueprint ich nie definiuje */
+    public panelQueriesFor(dashboard: string, panel: string): ExtraQuery[] | undefined {
+        return this.props.panelQueries && this.fillQueries(this.props.panelQueries, dashboard, panel);
+    }
+
+    /** Własne węzły reguły alertu (z podstawionymi znacznikami) albo undefined */
+    public alertNodesFor(dashboard: string, panel: string): AlertNode[] | undefined {
+        const nodes = this.props.alert?.queries;
+        if (!nodes?.length) return undefined;
         const where = this.where(dashboard, panel);
-        return (this.props.extraQueries ?? []).map(q => ({
+        const vars = this.templateVars(dashboard, panel, undefined, this.props.alert?.field ?? this.props.fields[0], where, this.props.alert?.interval ?? '5m');
+        return nodes.map(n => ({ ...n, query: n.type === 'math' ? n.query : this.fill(n.query, vars) }));
+    }
+
+    private fillQueries(queries: readonly ExtraQuery[], dashboard: string, panel: string): ExtraQuery[] {
+        const vars = this.templateVars(dashboard, panel, undefined, this.props.fields[0], this.where(dashboard, panel), '$__interval');
+        return queries.map(q => ({
             ...q,
-            alias: this.title(q.alias, dashboard, panel),
-            query: this.fill(q.query, this.templateVars(dashboard, panel, undefined, this.props.fields[0], where, '$__interval')),
+            ...(q.alias ? { alias: this.title(q.alias, dashboard, panel) } : {}),
+            query: q.type === 'math' ? q.query : this.fill(q.query, vars),
         }));
     }
 

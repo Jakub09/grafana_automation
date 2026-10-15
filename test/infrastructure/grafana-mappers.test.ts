@@ -157,3 +157,62 @@ test('Mapper dashboardu: seria przerywana i kolor (np. próg z zapytania) - zapi
     // ponowny zapis nie dubluje override'ów
     assert.equal((mapper.toResource(mapper.toDomain(resource)).spec.panels as { fieldConfig: { overrides: unknown[] } }[])[0].fieldConfig.overrides.length, 1);
 });
+
+test('Mapper dashboardu: wyrażenie Grafany (math) z nazwą serii, ukryte składniki, jednostka serii na prawej osi', () => {
+    const mapper = new GrafanaDashboardMapper('v1beta1');
+    const dashboard = Dashboard.create({ title: 'D', folderUid: 'f' });
+    dashboard.addPanel({ title: 'P', unit: 'decgbytes', queries: [
+        { refId: 'A', query: 'SELECT used', alias: 'USED.GB', hidden: true },
+        { refId: 'B', query: 'SELECT total', alias: 'TOTAL.GB', hidden: true },
+        { refId: 'C', query: '$A / $B', type: 'math', alias: 'Zajętość', unit: 'percentunit' },
+    ] });
+    const resource = mapper.toResource(dashboard);
+    const panel = (resource.spec.panels as { targets: Record<string, unknown>[]; fieldConfig: { overrides: { matcher: { id: string; options: string }; properties: { id: string; value: unknown }[] }[] } }[])[0];
+    assert.deepEqual(panel.targets[2], { refId: 'C', datasource: { type: '__expr__', uid: '__expr__', name: 'Expression' }, type: 'math', expression: '$A / $B', hide: undefined });
+    assert.deepEqual(panel.fieldConfig.overrides.map(o => [o.matcher.id, o.matcher.options, o.properties.map(p => `${p.id}=${JSON.stringify(p.value)}`)]), [
+        ['byFrameRefID', 'C', ['displayName="Zajętość"']],
+        ['byName', 'Zajętość', ['unit="percentunit"', 'custom.axisPlacement="right"']],
+    ]);
+
+    const restored = mapper.toDomain(resource).panels[0].queries;
+    assert.deepEqual(restored.map(q => [q.refId, q.type ?? 'influx', q.query, q.alias, q.unit ?? null, q.hidden ?? false]), [
+        ['A', 'influx', 'SELECT used', 'USED.GB', null, true],
+        ['B', 'influx', 'SELECT total', 'TOTAL.GB', null, true],
+        ['C', 'math', '$A / $B', 'Zajętość', 'percentunit', false],
+    ]);
+    assert.equal((mapper.toResource(mapper.toDomain(resource)).spec.panels as { fieldConfig: { overrides: unknown[] } }[])[0].fieldConfig.overrides.length, 2);
+});
+
+test('Mapper reguły alertu: własne węzły (A, B, C = $A / $B) -> reduce D -> próg E, round-trip', () => {
+    const rule = AlertRule.create({
+        title: 'Zajętość SG1', folderUid: 'f', ruleGroup: 'g', datasourceUid: 'ds', query: 'SELECT used',
+        nodes: [{ refId: 'A', query: 'SELECT used' }, { refId: 'B', query: 'SELECT total' }, { refId: 'C', query: '$A / $B', type: 'math' }],
+        conditionRefId: 'C',
+        lookbackSeconds: 600, condition: { reducer: 'last', evaluator: 'gt', threshold: 0.9 }, pendingPeriod: '5m',
+        labels: {}, isPaused: false, noDataState: 'NoData', execErrState: 'Error',
+    });
+    const json = alertRuleToGrafana(rule);
+    assert.equal(json.condition, 'E');
+    assert.deepEqual(json.data.map(d => [d.refId, d.model.type ?? 'influx', d.model.expression ?? d.model.query]), [
+        ['A', 'influx', 'SELECT used'], ['B', 'influx', 'SELECT total'], ['C', 'math', '$A / $B'], ['D', 'reduce', 'C'], ['E', 'threshold', 'D'],
+    ]);
+    const back = alertRuleToDomain({ ...json, uid: 'u1' });
+    assert.equal(back.managed, true);
+    assert.equal(back.valueRefId, 'D');
+    assert.deepEqual([back.toProps().nodes, back.toProps().conditionRefId], [rule.toProps().nodes, 'C']);
+    assert.deepEqual(alertRuleToGrafana(back).data, json.data);
+    assert.throws(() => AlertRule.create({ ...rule.toProps(), nodes: [{ refId: 'A', query: '$X', type: 'math' }] }), /co najmniej jedno zapytanie|nieistniejący/);
+});
+
+test('Mapper reguły alertu: contact point (receiver) z ustawieniami powiadomień - round-trip', () => {
+    const rule = AlertRule.create({
+        title: 'R', folderUid: 'f', ruleGroup: 'g', datasourceUid: 'ds', query: 'SELECT 1',
+        lookbackSeconds: 600, condition: { reducer: 'last', evaluator: 'gt', threshold: 1 }, pendingPeriod: '5m',
+        labels: {}, isPaused: false, noDataState: 'NoData', execErrState: 'Error',
+        receiver: 'storage-team', notification: { groupBy: ['alertname'], repeatInterval: '12h', muteTimeIntervals: ['weekend'] },
+    });
+    const json = alertRuleToGrafana(rule);
+    assert.deepEqual(json.notification_settings, { receiver: 'storage-team', group_by: ['alertname'], repeat_interval: '12h', mute_time_intervals: ['weekend'] });
+    const back = alertRuleToDomain(json).toProps();
+    assert.deepEqual([back.receiver, back.notification], ['storage-team', rule.toProps().notification]);
+});

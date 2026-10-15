@@ -11,14 +11,23 @@
     "seriesTag": "MTYPE"
   },
   "filters": {
-    "MTYPE": { "include": ["TOTAL.GB", "USED.GB"] }
+    "MTYPE": {
+      "include": [
+        "TOTAL.GB",
+        "USED.GB"
+      ]
+    }
   },
   "dashboardTitle": "{dashboard} - storage groups",
   "panelTitle": "{dashboard} / {panel}",
   "seriesAlias": "{series}",
   "unit": "decgbytes",
   "axisLabel": "Pojemność",
-  "tags": ["auto-generated", "storage", "mainframe"],
+  "tags": [
+    "auto-generated",
+    "storage",
+    "mainframe"
+  ],
   "connectNulls": true,
   "layout": {
     "panelsPerRow": 3,
@@ -26,17 +35,44 @@
   },
   "summaryPanel": {
     "title": "{dashboard} - zajętość SG [%]",
-    "filter": { "MTYPE": "USED.Per" },
+    "filter": {
+      "MTYPE": "USED.Per"
+    },
     "unit": "percent",
     "axisLabel": "Zajętość",
     "min": 0,
     "max": 100,
     "thresholds": [
-      { "value": 80, "color": "orange" },
-      { "value": 90, "color": "red" }
+      {
+        "value": 80,
+        "color": "orange"
+      },
+      {
+        "value": 90,
+        "color": "red"
+      }
     ],
     "height": 9
   },
+  "panelQueries": [
+    {
+      "refId": "A",
+      "alias": "USED.GB",
+      "query": "SELECT mean(\"VAL\") FROM \"MF.STG.SPACE\" WHERE {where} AND \"MTYPE\" = 'USED.GB' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+      "refId": "B",
+      "alias": "TOTAL.GB",
+      "query": "SELECT mean(\"VAL\") FROM \"MF.STG.SPACE\" WHERE {where} AND \"MTYPE\" = 'TOTAL.GB' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+      "refId": "C",
+      "alias": "Zajętość",
+      "expression": "$A / $B",
+      "unit": "percentunit",
+      "color": "purple"
+    }
+  ],
   "extraQueries": [
     {
       "alias": "Próg 90%",
@@ -45,11 +81,8 @@
       "dashed": true
     }
   ],
-  "queries": {
-    "alert": "SELECT mean(\"VAL\") FROM \"MF.STG.SPACE\" WHERE \"LPAR\" = '{dashboard}' AND \"SGN\" = '{panel}' AND \"MTYPE\" = 'USED.Per' AND $timeFilter GROUP BY time({interval}) fill(none)"
-  },
   "alert": {
-    "threshold": 90,
+    "threshold": 0.9,
     "evaluator": "gt",
     "reducer": "last",
     "pendingPeriod": "15m",
@@ -57,6 +90,22 @@
     "interval": "5m",
     "ruleGroup": "mf-storage",
     "severity": "warning",
-    "showOnChart": false
+    "showOnChart": false,
+    "evaluationInterval": "1m",
+    "queries": [
+      {
+        "refId": "A",
+        "query": "SELECT mean(\"VAL\") FROM \"MF.STG.SPACE\" WHERE \"LPAR\" = '{dashboard}' AND \"SGN\" = '{panel}' AND \"MTYPE\" = 'USED.GB' AND $timeFilter GROUP BY time({interval}) fill(none)"
+      },
+      {
+        "refId": "B",
+        "query": "SELECT mean(\"VAL\") FROM \"MF.STG.SPACE\" WHERE \"LPAR\" = '{dashboard}' AND \"SGN\" = '{panel}' AND \"MTYPE\" = 'TOTAL.GB' AND $timeFilter GROUP BY time({interval}) fill(none)"
+      },
+      {
+        "refId": "C",
+        "expression": "$A / $B"
+      }
+    ],
+    "conditionRefId": "C"
   }
 }

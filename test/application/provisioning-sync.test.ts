@@ -273,3 +273,24 @@ test('connectNulls: "Connect null values" w panelach i podsumowaniu - plan pokaz
     await env.service.apply('storage', { update: true });
     assert.equal(env.dashboard().getPanel(1).spanNulls, 3_600_000);
 });
+
+test('alert.evaluationInterval: nowa grupa reguł dostaje interwał od razu, zmiana istniejącej - z --update', async () => {
+    const env = setup(['M,LPAR=L1,SGN=SG1,MYTYPE=1']);
+    env.change({ alert: { ...baseProps.alert!, evaluationInterval: '1m' } });
+    const created = await env.service.apply('storage');
+    assert.deepEqual(created.at(-1)!.actions.map(a => [a.type, a.changes?.[0].after, a.skipped]), [['update-rule-group', '1m', undefined]]);
+    assert.equal(await env.rules.getGroupInterval('f', 'storage'), 60);
+    assert.equal((await env.service.plan('storage')).length, 1); // bez zmian - brak wpisu grupy
+
+    env.change({ alert: { ...baseProps.alert!, evaluationInterval: '5m' } });
+    const plan = await env.service.plan('storage');
+    assert.deepEqual(plan.at(-1)!.actions.map(a => [a.changes?.[0].before, a.changes?.[0].after, a.skipped]), [['1m', '5m', 'wymaga --update']]);
+    await env.service.apply('storage', { update: true });
+    assert.equal(await env.rules.getGroupInterval('f', 'storage'), 300);
+});
+
+test('Blueprint: evaluationInterval - wielokrotność 10 s, pendingPeriod jego wielokrotnością; receiver z ustawieniami powiadomień', () => {
+    assert.throws(() => new Blueprint({ ...baseProps, alert: { ...baseProps.alert!, evaluationInterval: '15s' } }), /wielokrotnością 10 s/);
+    assert.throws(() => new Blueprint({ ...baseProps, alert: { ...baseProps.alert!, pendingPeriod: '5m', evaluationInterval: '2m' } }), /pendingPeriod/);
+    assert.equal(new Blueprint({ ...baseProps, alert: { ...baseProps.alert!, pendingPeriod: '10m', evaluationInterval: '2m' } }).evaluationIntervalSeconds, 120);
+});

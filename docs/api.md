@@ -286,3 +286,17 @@ w tej samej Grafanie.
 | `process_uptime_seconds` | – | czas działania procesu |
 
 CLI działa jako osobny proces, więc jego operacje nie trafiają do metryk serwera, a tylko do logu.
+
+---
+
+## Grupy reguł: interwał ewaluacji
+
+| Metoda | Ścieżka | Opis |
+|---|---|---|
+| `GET` | `/api/alert-rules/groups/:folderUid/:grupa` | `{"intervalSeconds": 60}` |
+| `PUT` | `/api/alert-rules/groups/:folderUid/:grupa` | treść `{"interval": "30s"}`; wielokrotność 10 s, dotyczy wszystkich reguł grupy |
+
+Reguły z wyrażeniami: `POST /api/dashboards/:uid/panels/:panelId/alert-rules` przyjmuje `nodes`
+(`[{ "refId": "A", "query": "..." }, { "refId": "C", "query": "$A / $B", "type": "math" }]`) i `conditionRefId`,
+albo `"nodesFromPanel": true`, które bierze zapytania i wyrażenia panelu. Zapytania paneli w API mają pola `type: "math"`
+(wyrażenie w `query`), `unit` (prawa oś) i `hidden`.

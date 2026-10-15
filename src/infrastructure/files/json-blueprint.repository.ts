@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { Blueprint } from '../../domain/provisioning/blueprint';
+import { Blueprint, ExtraQuery } from '../../domain/provisioning/blueprint';
 import { BlueprintRepository } from '../../domain/provisioning/blueprint.repository';
 import { ConflictError, ValidationError } from '../../shared/errors';
 import { logger } from '../../shared/logger';
@@ -73,12 +73,17 @@ export class JsonBlueprintRepository implements BlueprintRepository {
         } catch (error) {
             throw new ValidationError(`Niepoprawny JSON w ${file}: ${(error as Error).message}`);
         }
-        const { $schema: _schema, alert, field, fields, connectNulls, ...rest } = parseWithSchema(blueprintFileSchema, json, file);
+        const { $schema: _schema, alert, field, fields, connectNulls, panelQueries, extraQueries, ...rest } = parseWithSchema(blueprintFileSchema, json, file);
+        // "expression" w pliku -> zapytanie typu math w domenie
+        const toQuery = ({ expression, query, ...q }: { expression?: string; query?: string } & Omit<ExtraQuery, 'query' | 'type'>): ExtraQuery =>
+            (expression ? { ...q, query: expression, type: 'math' } : { ...q, query: query! });
 
         return new Blueprint({
             ...rest,
             name,
             fields: fields ?? [field!],
+            ...(panelQueries ? { panelQueries: panelQueries.map(toQuery) } : {}),
+            ...(extraQueries ? { extraQueries: extraQueries.map(toQuery) } : {}),
             connectNulls: typeof connectNulls === 'string' ? parseDurationMs(connectNulls) : connectNulls,
             alert: alert && {
                 condition: { threshold: alert.threshold, evaluator: alert.evaluator, reducer: alert.reducer },
@@ -90,6 +95,14 @@ export class JsonBlueprintRepository implements BlueprintRepository {
                 ruleGroup: alert.ruleGroup,
                 labels: { severity: alert.severity, ...alert.labels },
                 receiver: alert.receiver,
+                ...(alert.notification ? { notification: alert.notification } : {}),
+                ...(alert.evaluationInterval ? { evaluationInterval: alert.evaluationInterval } : {}),
+                ...(alert.queries ? {
+                    queries: alert.queries.map(n => (n.expression
+                        ? { refId: n.refId, query: n.expression, type: 'math' as const }
+                        : { refId: n.refId, query: n.query! })),
+                    conditionRefId: alert.conditionRefId,
+                } : {}),
             },
         });
     }

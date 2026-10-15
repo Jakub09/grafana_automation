@@ -1,4 +1,4 @@
-import { AlertRule, ExecErrState, NoDataState, Reducer } from '../../domain/alerting/alert-rule';
+import { AlertRule, ExecErrState, NoDataState, NotificationSettings, Reducer } from '../../domain/alerting/alert-rule';
 import { GrafanaAlertQuery, GrafanaAlertRuleJson } from './grafana-api.types';
 
 const EXPR = { type: '__expr__', uid: '__expr__', name: 'Expression' };
@@ -32,44 +32,65 @@ export function alertRuleToGrafana(rule: AlertRule): GrafanaAlertRuleJson {
         return { ...raw, ...annotations, isPaused: p.isPaused };
     }
 
+    // Węzły danych: własne (kilka zapytań, wyrażenia) albo jedno zapytanie A; potem reduce i próg na kolejnych literach
+    const nodes = p.nodes?.length ? p.nodes : [{ refId: 'A', query: p.query }];
+    const used = new Set(nodes.map(n => n.refId));
+    const nextRef = () => {
+        for (let i = 0; ; i++) {
+            const ref = i < 26 ? String.fromCharCode(65 + i) : `R${i}`;
+            if (!used.has(ref)) { used.add(ref); return ref; }
+        }
+    };
+    const source = p.conditionRefId ?? nodes[nodes.length - 1].refId;
+    const reduceRef = nextRef();
+    const thresholdRef = nextRef();
+
     const data: GrafanaAlertQuery[] = [
+        ...nodes.map((n): GrafanaAlertQuery => n.type === 'math'
+            ? {
+                refId: n.refId,
+                queryType: '',
+                relativeTimeRange: { from: 0, to: 0 },
+                datasourceUid: EXPR.uid,
+                model: { refId: n.refId, datasource: EXPR, type: 'math', expression: n.query },
+            }
+            : {
+                refId: n.refId,
+                queryType: '',
+                relativeTimeRange: { from: p.lookbackSeconds, to: 0 },
+                datasourceUid: p.datasourceUid,
+                model: {
+                    refId: n.refId,
+                    datasource: { type: 'influxdb', uid: p.datasourceUid },
+                    query: n.query,
+                    rawQuery: true,
+                    resultFormat: 'time_series',
+                    intervalMs: 1000,
+                    maxDataPoints: 43200,
+                },
+            }),
         {
-            refId: 'A',
-            queryType: '',
-            relativeTimeRange: { from: p.lookbackSeconds, to: 0 },
-            datasourceUid: p.datasourceUid,
-            model: {
-                refId: 'A',
-                datasource: { type: 'influxdb', uid: p.datasourceUid },
-                query: p.query,
-                rawQuery: true,
-                resultFormat: 'time_series',
-                intervalMs: 1000,
-                maxDataPoints: 43200,
-            },
-        },
-        {
-            refId: 'B',
+            refId: reduceRef,
             queryType: '',
             relativeTimeRange: { from: 0, to: 0 },
             datasourceUid: EXPR.uid,
             // dropNN: pomija null/NaN (np. puste kubełki z fill(null) w zapytaniach paneli)
-            model: { refId: 'B', datasource: EXPR, type: 'reduce', expression: 'A', reducer: p.condition.reducer, settings: { mode: 'dropNN' } },
+            model: { refId: reduceRef, datasource: EXPR, type: 'reduce', expression: source, reducer: p.condition.reducer, settings: { mode: 'dropNN' } },
         },
         {
-            refId: 'C',
+            refId: thresholdRef,
             queryType: '',
             relativeTimeRange: { from: 0, to: 0 },
             datasourceUid: EXPR.uid,
             model: {
-                refId: 'C',
+                refId: thresholdRef,
                 datasource: EXPR,
                 type: 'threshold',
-                expression: 'B',
+                expression: reduceRef,
                 conditions: [{
                     evaluator: { params: [p.condition.threshold], type: p.condition.evaluator },
                     operator: { type: 'and' },
-                    query: { params: ['C'] },
+                    query: { params: [thresholdRef] },
                     reducer: { params: [], type: 'last' },
                     type: 'query',
                 }],
@@ -91,7 +112,7 @@ export function alertRuleToGrafana(rule: AlertRule): GrafanaAlertRuleJson {
         folderUID: p.folderUid,
         ruleGroup: p.ruleGroup,
         title: p.title,
-        condition: 'C',
+        condition: thresholdRef,
         data,
         noDataState: p.noDataState,
         execErrState: p.execErrState,
@@ -99,26 +120,56 @@ export function alertRuleToGrafana(rule: AlertRule): GrafanaAlertRuleJson {
         annotations: withInactivity(withoutKey({ ...original?.annotations, ...annotations }, p.showOnChart === false ? null : CHART_ANNOTATION), p.inactiveSince),
         labels: { ...p.labels },
         isPaused: p.isPaused,
-        ...(p.receiver ? { notification_settings: { receiver: p.receiver } } : {}),
+        ...(p.receiver ? {
+            notification_settings: {
+                receiver: p.receiver,
+                ...(p.notification?.groupBy ? { group_by: p.notification.groupBy } : {}),
+                ...(p.notification?.groupWait ? { group_wait: p.notification.groupWait } : {}),
+                ...(p.notification?.groupInterval ? { group_interval: p.notification.groupInterval } : {}),
+                ...(p.notification?.repeatInterval ? { repeat_interval: p.notification.repeatInterval } : {}),
+                ...(p.notification?.muteTimeIntervals ? { mute_time_intervals: p.notification.muteTimeIntervals } : {}),
+            },
+        } : {}),
     };
+}
+
+function notificationOf(ns: GrafanaAlertRuleJson['notification_settings']): { notification?: NotificationSettings } {
+    if (!ns) return {};
+    const n: NotificationSettings = {
+        ...(ns.group_by?.length ? { groupBy: ns.group_by } : {}),
+        ...(ns.group_wait ? { groupWait: ns.group_wait } : {}),
+        ...(ns.group_interval ? { groupInterval: ns.group_interval } : {}),
+        ...(ns.repeat_interval ? { repeatInterval: ns.repeat_interval } : {}),
+        ...(ns.mute_time_intervals?.length ? { muteTimeIntervals: ns.mute_time_intervals } : {}),
+    };
+    return Object.keys(n).length ? { notification: n } : {};
 }
 
 export function alertRuleToDomain(raw: GrafanaAlertRuleJson): AlertRule {
     const data = raw.data ?? [];
     const queryNode = data.find(d => d.datasourceUid !== EXPR.uid);
-    const reduceNode = data.find(d => d.model?.type === 'reduce');
-    const thresholdNode = data.find(d => d.model?.type === 'threshold');
+    const reduceNodes = data.filter(d => d.model?.type === 'reduce');
+    const thresholdNodes = data.filter(d => d.model?.type === 'threshold');
+    const reduceNode = reduceNodes[0];
+    const thresholdNode = thresholdNodes[0];
     const evaluator = thresholdNode?.model.conditions?.[0]?.evaluator;
 
+    // Węzły danych: zapytania InfluxDB i wyrażenia math (reszta poza reduce i progiem)
+    const dataNodes = data.filter(d => d !== reduceNode && d !== thresholdNode);
+    const isQuery = (d: GrafanaAlertQuery) => d.datasourceUid !== EXPR.uid && typeof d.model?.query === 'string' && d.model.query.trim() !== '';
+    const isMath = (d: GrafanaAlertQuery) => d.datasourceUid === EXPR.uid && d.model?.type === 'math' && typeof d.model.expression === 'string';
+
     const managed = Boolean(
-        data.length === 3
-        && queryNode?.model.query
-        && reduceNode?.model.expression === queryNode.refId
-        && thresholdNode?.model.expression === reduceNode.refId
+        reduceNodes.length === 1 && thresholdNodes.length === 1
+        && dataNodes.length > 0 && dataNodes.every(d => isQuery(d) || isMath(d)) && dataNodes.some(isQuery)
+        && dataNodes.some(d => d.refId === reduceNode.model.expression)
+        && thresholdNode.model.expression === reduceNode.refId
         && raw.condition === thresholdNode.refId
         && (evaluator?.type === 'gt' || evaluator?.type === 'lt')
         && typeof evaluator.params[0] === 'number'
     );
+    // jedno zapytanie A -> reduce -> próg: kształt standardowy (bez "nodes")
+    const simple = managed && dataNodes.length === 1;
 
     const panelId = raw.annotations?.__panelId__ ? Number(raw.annotations.__panelId__) : undefined;
     return AlertRule.restore({
@@ -128,6 +179,12 @@ export function alertRuleToDomain(raw: GrafanaAlertRuleJson): AlertRule {
         ruleGroup: raw.ruleGroup,
         datasourceUid: queryNode?.datasourceUid ?? '',
         query: queryNode?.model.query ?? '',
+        ...(managed && !simple ? {
+            nodes: dataNodes.map(d => (isMath(d)
+                ? { refId: d.refId, query: String(d.model.expression), type: 'math' as const }
+                : { refId: d.refId, query: String(d.model.query) })),
+            conditionRefId: String(reduceNode.model.expression),
+        } : {}),
         lookbackSeconds: queryNode?.relativeTimeRange?.from ?? 600,
         condition: {
             reducer: (reduceNode?.model.reducer ?? 'last') as Reducer,
@@ -141,6 +198,7 @@ export function alertRuleToDomain(raw: GrafanaAlertRuleJson): AlertRule {
         summary: raw.annotations?.summary,
         isPaused: raw.isPaused ?? false,
         receiver: raw.notification_settings?.receiver,
+        ...notificationOf(raw.notification_settings),
         noDataState: (raw.noDataState ?? 'NoData') as NoDataState,
         execErrState: (raw.execErrState ?? 'Error') as ExecErrState,
         managed,

@@ -119,6 +119,13 @@ export interface GrafanaAlertRuleJson {
     annotations?: Record<string, string>;
     labels?: Record<string, string>;
     isPaused?: boolean;
-    notification_settings?: { receiver: string };
+    notification_settings?: {
+        receiver: string;
+        group_by?: string[];
+        group_wait?: string;
+        group_interval?: string;
+        repeat_interval?: string;
+        mute_time_intervals?: string[];
+    };
     [key: string]: unknown;
 }

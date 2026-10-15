@@ -380,7 +380,12 @@ export class ReportService {
                     if (panels.length) {
                         specs.push(withOverrides({
                             ...this.specFromPlanned(panels[0].panel, range, title(d.title)),
-                            series: panels.flatMap(p => p.panel.queries.map(q => ({ query: q.query, alias: q.alias }))),
+                            // refId unikalne w obrębie wykresu (P0_A, P1_A...) - wyrażenia każdego panelu liczone z jego zapytań
+                            series: panels.flatMap((p, i) => p.panel.queries.map(q => ({
+                                refId: `P${i}_${q.refId}`,
+                                query: q.type === 'math' ? q.query.replace(/\$\{?(\w+)\}?/g, `$P${i}_$1`) : q.query,
+                                type: q.type, alias: q.alias, color: q.color, dashed: q.dashed, unit: q.unit, hidden: q.hidden,
+                            }))),
                         }, database));
                     }
                 } else {
@@ -404,7 +409,9 @@ export class ReportService {
             yLabel: panel.axisLabel,
             grafanaUnit: panel.unit,
             datasourceUid: panel.datasourceUid,
-            series: panel.queries.map(q => ({ query: q.query, alias: q.alias, color: q.color, dashed: q.dashed })),
+            series: panel.queries.map(q => ({
+                refId: q.refId, query: q.query, type: q.type, alias: q.alias, color: q.color, dashed: q.dashed, unit: q.unit, hidden: q.hidden,
+            })),
             yMin: panel.min,
             yMax: panel.max,
             analyses: panel.thresholds?.map(t => createAnalysis({ type: 'threshold', value: t.value, color: t.color, label: `Próg ${t.value}` })),
