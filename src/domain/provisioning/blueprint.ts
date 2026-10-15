@@ -89,6 +89,8 @@ export interface BlueprintProps {
     summaryPanel?: SummaryPanel;
     /** Układ paneli: N w wierszu, wysokość (panel podsumowania zawsze na całą szerokość na górze) */
     layout?: GridLayout;
+    /** Grafana "Connect null values" dla paneli i podsumowania: true - zawsze, false - nigdy, liczba ms - próg */
+    connectNulls?: boolean | number;
     alert?: BlueprintAlert;
 }
 

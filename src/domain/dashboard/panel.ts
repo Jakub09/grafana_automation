@@ -30,6 +30,8 @@ export interface PanelProps {
     min?: number; // zakres osi Y
     max?: number;
     thresholds?: PanelThreshold[];
+    /** Łączenie linii nad brakami danych (Grafana "Connect null values"): true - zawsze, false - nigdy, liczba - poniżej tylu ms */
+    spanNulls?: boolean | number;
     queries: PanelQuery[];
     /** Oryginalna konfiguracja z systemu źródłowego - zachowywana przy zapisie */
     passthrough?: unknown;
@@ -98,6 +100,7 @@ export class Panel {
     public get min(): number | undefined { return this.props.min; }
     public get max(): number | undefined { return this.props.max; }
     public get thresholds(): readonly PanelThreshold[] | undefined { return this.props.thresholds; }
+    public get spanNulls(): boolean | number | undefined { return this.props.spanNulls; }
     public get queries(): readonly PanelQuery[] { return this.props.queries; }
 
     public get visibleQueries(): PanelQuery[] {

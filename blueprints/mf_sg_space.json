@@ -19,6 +19,7 @@
   "unit": "decgbytes",
   "axisLabel": "Pojemność",
   "tags": ["auto-generated", "storage", "mainframe"],
+  "connectNulls": true,
   "layout": {
     "panelsPerRow": 3,
     "panelHeight": 8

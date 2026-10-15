@@ -35,6 +35,8 @@ export interface NewPanel {
     min?: number;
     max?: number;
     thresholds?: PanelThreshold[];
+    /** Łączenie linii nad brakami danych (Grafana "Connect null values"): true - zawsze, false - nigdy, liczba - poniżej tylu ms */
+    spanNulls?: boolean | number;
     queries: PanelQuery[];
 }
 
@@ -141,6 +143,7 @@ export class Dashboard {
             min: input.min,
             max: input.max,
             thresholds: input.thresholds,
+            spanNulls: input.spanNulls,
             queries: input.queries,
         });
         this.props.panels.push(panel);

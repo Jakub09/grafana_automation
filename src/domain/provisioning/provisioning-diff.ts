@@ -94,7 +94,9 @@ export function pruneQueries(current: readonly PanelQuery[], inactive: ReadonlyS
     return { queries: current.filter(q => !inactive.has(queryKey(q))).map(q => ({ ...q })), changes };
 }
 
-const PANEL_FIELDS = ['unit', 'axisLabel', 'min', 'max', 'thresholds'] as const;
+const PANEL_FIELDS = ['unit', 'axisLabel', 'min', 'max', 'thresholds', 'spanNulls'] as const;
+/** Pola porównywane tylko wtedy, gdy ustawia je blueprint (inaczej zostaje ustawienie z Grafany) */
+const OPTIONAL_FIELDS: ReadonlySet<string> = new Set(['spanNulls']);
 type PanelField = typeof PANEL_FIELDS[number];
 
 /**
@@ -103,11 +105,12 @@ type PanelField = typeof PANEL_FIELDS[number];
  */
 export function diffPanel(
     panel: Panel, desired: Omit<NewPanel, 'gridPos'>, keep: ReadonlySet<string> = new Set(),
-    fields: readonly PanelField[] = ['unit', 'axisLabel'],
+    fields: readonly PanelField[] = ['unit', 'axisLabel', 'spanNulls'],
 ) {
     const changes: FieldChange[] = [];
     const update: Partial<Pick<NewPanel, PanelField | 'queries'>> = {};
     for (const field of fields) {
+        if (OPTIONAL_FIELDS.has(field) && desired[field] === undefined) continue;
         if (!same(panel[field], desired[field])) {
             changes.push({ field, before: panel[field] ?? null, after: desired[field] ?? null });
             (update as Record<string, unknown>)[field] = desired[field];

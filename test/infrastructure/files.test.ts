@@ -68,3 +68,10 @@ test('Raport: PDF domyślnie dołączany do maila (email.attachPdf = true), moż
     assert.equal(parseWithSchema(reportFileSchema, minimal, 'r.json').email.attachPdf, true);
     assert.equal(parseWithSchema(reportFileSchema, { ...minimal, email: { attachPdf: false } }, 'r.json').email.attachPdf, false);
 });
+
+test('Blueprint: connectNulls - true / false / próg czasu ("1h")', () => {
+    const base = { measurement: 'M', field: 'VAL', grouping: { panelTag: 'P' } };
+    assert.equal(parseWithSchema(blueprintFileSchema, { ...base, connectNulls: true }, 'b.json').connectNulls, true);
+    assert.equal(parseWithSchema(blueprintFileSchema, { ...base, connectNulls: '1h' }, 'b.json').connectNulls, '1h');
+    assert.throws(() => parseWithSchema(blueprintFileSchema, { ...base, connectNulls: 'zawsze' }, 'b.json'), /connectNulls/);
+});

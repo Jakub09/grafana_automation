@@ -254,3 +254,22 @@ test('provision remove: podgląd, usunięcie wygenerowanych dashboardów i regu�
     await env.service.apply('storage');
     assert.equal(env.dashboards.items.size, 3);
 });
+
+test('connectNulls: "Connect null values" w panelach i podsumowaniu - plan pokazuje zmianę, --update ją ustawia', async () => {
+    const env = setup(['M,LPAR=L1,SGN=SG1,MYTYPE=1']);
+    await env.service.apply('storage');
+    assert.equal(env.dashboard().getPanel(1).spanNulls, false); // domyślny szablon panelu Grafany: Never
+
+    env.change({ connectNulls: true, summaryPanel: { title: '{dashboard} - %', filter: { MYTYPE: '3' }, unit: 'percent', thresholds: [], height: 6 } });
+    const plan = await env.service.plan('storage');
+    const update = plan[0].actions.find(a => a.type === 'update-panel')!;
+    assert.deepEqual(update.changes, [{ field: 'spanNulls', before: false, after: true }]);
+
+    await env.service.apply('storage', { update: true });
+    assert.deepEqual(env.dashboard().panels.map(p => [p.title, p.spanNulls]), [['L1 / SG1', true], ['L1 - %', true]]);
+    assert.deepEqual((await env.service.plan('storage', { update: true }))[0].actions, []);
+
+    env.change({ connectNulls: 3_600_000 }); // Threshold 1 h
+    await env.service.apply('storage', { update: true });
+    assert.equal(env.dashboard().getPanel(1).spanNulls, 3_600_000);
+});

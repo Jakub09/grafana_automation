@@ -60,6 +60,8 @@ const panelFields = {
     min: z.number().optional(),
     max: z.number().optional(),
     thresholds: z.array(z.object({ value: z.number(), color: z.string() })).optional(),
+    spanNulls: z.union([z.boolean(), z.number().int().positive()]).optional()
+        .describe('Łączenie linii nad brakami danych: true - zawsze, false - nigdy, liczba - przerwy krótsze niż tyle ms'),
     queries: queriesSchema,
 };
 

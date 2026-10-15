@@ -4,6 +4,7 @@ import { Blueprint } from '../../domain/provisioning/blueprint';
 import { BlueprintRepository } from '../../domain/provisioning/blueprint.repository';
 import { ConflictError, ValidationError } from '../../shared/errors';
 import { logger } from '../../shared/logger';
+import { parseDurationMs } from '../../domain/shared/time-range';
 import { blueprintFileSchema, parseWithSchema } from './file-schemas';
 
 /** Blueprinty z plików <blueprintsDir>/<name>.json - jeden plik na schemat danych */
@@ -72,12 +73,13 @@ export class JsonBlueprintRepository implements BlueprintRepository {
         } catch (error) {
             throw new ValidationError(`Niepoprawny JSON w ${file}: ${(error as Error).message}`);
         }
-        const { $schema: _schema, alert, field, fields, ...rest } = parseWithSchema(blueprintFileSchema, json, file);
+        const { $schema: _schema, alert, field, fields, connectNulls, ...rest } = parseWithSchema(blueprintFileSchema, json, file);
 
         return new Blueprint({
             ...rest,
             name,
             fields: fields ?? [field!],
+            connectNulls: typeof connectNulls === 'string' ? parseDurationMs(connectNulls) : connectNulls,
             alert: alert && {
                 condition: { threshold: alert.threshold, evaluator: alert.evaluator, reducer: alert.reducer },
                 field: alert.field,

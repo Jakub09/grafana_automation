@@ -110,6 +110,18 @@
       "default": {},
       "description": "Znaczniki: {measurement} {field} {aggregation} {dashboard} {panel} {series} {where} {interval}. Zapytanie panelu musi zawierać $timeFilter i GROUP BY time($__interval)."
     },
+    "connectNulls": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "string",
+          "pattern": "^\\d+[smhd]$"
+        }
+      ],
+      "description": "Grafana \"Connect null values\" w panelach i podsumowaniu: true - Always, false - Never, \"1h\" - Threshold (łączy przerwy krótsze niż podany czas). Bez tego klucza - ustawienie z Grafany bez zmian."
+    },
     "layout": {
       "type": "object",
       "properties": {

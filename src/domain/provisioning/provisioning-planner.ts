@@ -44,7 +44,8 @@ export interface PlannedDashboard {
  * Nowe panele dostają zapytania tylko dla aktywnych serii. Czysta funkcja - nic nie zapisuje.
  */
 export function planProvisioning(tree: SchemaTree, blueprint: Blueprint, datasourceUid?: string): PlannedDashboard[] {
-    const { unit, axisLabel, tags } = blueprint.props;
+    const { unit, axisLabel, tags, connectNulls } = blueprint.props;
+    const spanNulls = connectNulls !== undefined ? { spanNulls: connectNulls } : {};
 
     const summary = blueprint.summaryPanel;
     return tree.dashboards.map(group => ({
@@ -63,6 +64,7 @@ export function planProvisioning(tree: SchemaTree, blueprint: Blueprint, datasou
                 min: summary.min,
                 max: summary.max,
                 thresholds: summary.thresholds,
+                ...spanNulls,
                 queries: [{
                     refId: 'A',
                     query: blueprint.summaryQuery(group.name),
@@ -82,6 +84,7 @@ export function planProvisioning(tree: SchemaTree, blueprint: Blueprint, datasou
                 datasourceUid,
                 unit,
                 axisLabel,
+                ...spanNulls,
                 queries: series.map((s, i) => ({
                     refId: refIdFor(i),
                     query: blueprint.panelQuery(group.name, panelGroup.name, s),

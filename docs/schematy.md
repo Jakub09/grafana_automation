@@ -76,6 +76,7 @@ panel. Zawsze go sprawdź i dodaj sekcję `alert`, jeśli schemat ma mieć alert
 | `unit` | – | jednostka Grafany, np. `decgbytes` (wykresy w mailach przeliczają GB → TB → PB), `percent` |
 | `axisLabel`, `tags` | – | opis osi Y, tagi dashboardu |
 | `queries.panel`, `queries.alert` | – | własne szablony zapytań (niżej) |
+| `connectNulls` | – | Grafana *Connect null values* w panelach i podsumowaniu: `true` = *Always*, `false` = *Never*, `"1h"` = *Threshold* (łączy przerwy krótsze niż 1 h). Bez klucza ustawienie w Grafanie się nie zmienia. Istniejące panele zmienia `provision apply --update`. Wykresy w mailach i raportach zawsze łączą linię nad pustymi kubełkami |
 | `layout` | – | układ paneli: `{ "panelsPerRow": 3, "panelHeight": 8 }` ([niżej](#układ-paneli-layout)) |
 | `extraQueries` | – | dodatkowe zapytania w każdym panelu, np. linia progu ([niżej](#dodatkowe-zapytania-w-panelu-extraqueries)) |
 | `inactiveAfterHours` | – | próg nieaktywności dla tego schematu (domyślnie `SERIES_INACTIVE_AFTER_HOURS`) |

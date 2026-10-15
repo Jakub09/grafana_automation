@@ -173,6 +173,9 @@ export const blueprintFileSchema = z.object({
     }).strict().default({})
         .describe('Znaczniki: {measurement} {field} {aggregation} {dashboard} {panel} {series} {where} {interval}. '
             + 'Zapytanie panelu musi zawierać $timeFilter i GROUP BY time($__interval).'),
+    connectNulls: z.union([z.boolean(), z.string().regex(/^\d+[smhd]$/, 'Czas, np. "1h", "30m"')]).optional()
+        .describe('Grafana "Connect null values" w panelach i podsumowaniu: true - Always, false - Never, '
+            + '"1h" - Threshold (łączy przerwy krótsze niż podany czas). Bez tego klucza - ustawienie z Grafany bez zmian.'),
     layout: z.object({
         panelsPerRow: z.union([1, 2, 3, 4, 6, 8, 12].map(n => z.literal(n)) as unknown as [z.ZodLiteral<number>, z.ZodLiteral<number>])
             .default(2).describe('Paneli w wierszu (dzielnik 24: 1, 2, 3, 4, 6, 8, 12)'),

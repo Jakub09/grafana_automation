@@ -74,6 +74,9 @@ export class GrafanaDashboardMapper {
     }
 }
 
+const spanNullsOf = (value: unknown): boolean | number | undefined =>
+    typeof value === 'boolean' || (typeof value === 'number' && value > 0) ? value : undefined;
+
 export function panelToDomain(raw: GrafanaPanel): Panel {
     const colorByName = new Map<string, string>();
     const dashedNames = new Set<string>();
@@ -115,6 +118,7 @@ export function panelToDomain(raw: GrafanaPanel): Panel {
         thresholds: thresholdsShown && thresholdsShown !== 'off'
             ? steps.filter((st): st is { color: string; value: number } => typeof st.value === 'number').map(st => ({ value: st.value, color: st.color }))
             : undefined,
+        spanNulls: spanNullsOf((defaults?.custom as { spanNulls?: unknown } | undefined)?.spanNulls),
         queries,
         passthrough: raw,
     });
@@ -182,6 +186,7 @@ export function panelToGrafana(panel: Panel): GrafanaPanel {
                 custom: {
                     ...defaults.custom,
                     axisLabel: p.axisLabel ?? '',
+                    ...(p.spanNulls !== undefined ? { spanNulls: p.spanNulls } : {}),
                     ...(p.thresholds ? { thresholdsStyle: { mode: p.thresholds.length ? 'dashed' : 'off' } } : {}),
                 },
                 ...(p.thresholds ? {
