@@ -1,0 +1,41 @@
+{
+  "$schema": "../../schemas/blueprint.schema.json",
+  "description": "DEV: pamięć systemów - jeden dashboard, panel na SYSTEM, serie z pól USED i CACHED, bez systemów testowych",
+  "measurement": "SYS.MEMORY",
+  "fields": [
+    "USED",
+    "CACHED"
+  ],
+  "aggregation": "mean",
+  "grouping": {
+    "panelTag": "SYSTEM"
+  },
+  "filters": {
+    "SYSTEM": {
+      "exclude": [
+        "TEST*"
+      ]
+    }
+  },
+  "dashboardTitle": "Pamięć systemów",
+  "panelTitle": "{panel}",
+  "seriesAlias": "{series}",
+  "unit": "decgbytes",
+  "axisLabel": "Pamięć",
+  "tags": [
+    "auto-generated",
+    "dev",
+    "memory"
+  ],
+  "queries": {
+    "alert": "SELECT mean(\"USED\") / (mean(\"USED\") + mean(\"FREE\")) * 100 FROM \"SYS.MEMORY\" WHERE {where} AND $timeFilter GROUP BY time({interval}) fill(none)"
+  },
+  "alert": {
+    "threshold": 90,
+    "evaluator": "gt",
+    "reducer": "last",
+    "pendingPeriod": "0s",
+    "ruleGroup": "memory-dev",
+    "severity": "critical"
+  }
+}

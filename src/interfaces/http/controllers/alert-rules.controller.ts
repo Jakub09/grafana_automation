@@ -1,0 +1,55 @@
+import { AlertRuleChanges } from '../../../domain/alerting/alert-rule';
+import { Container } from '../../../bootstrap/container';
+import { ApiRegistry } from '../api-registry';
+import { asyncHandler } from '../middlewares/async-handler';
+import { alertRuleJson } from '../presenters';
+import { alertRuleFilterSchema, parseBody, updateAlertRuleSchema } from '../validation';
+
+export function alertRulesRouter(c: Container, registry: ApiRegistry) {
+    const r = registry.router('/api/alert-rules');
+    const tag = 'Reguły alertów';
+
+    r.get('/', { tag, summary: 'Lista reguł alertów', query: alertRuleFilterSchema }, asyncHandler(async (req, res) => {
+        const rules = await c.alertRules.list(parseBody(alertRuleFilterSchema, req.query));
+        res.json(rules.map(alertRuleJson));
+    }));
+
+    r.get('/:uid', { tag, summary: 'Reguła alertu' }, asyncHandler(async (req, res) => {
+        res.json(alertRuleJson(await c.alertRules.get(req.params.uid)));
+    }));
+
+    r.patch('/:uid', {
+        tag,
+        summary: 'Zmiana reguły (próg, zapytanie, czas oczekiwania...)',
+        description: 'Tylko reguły zarządzane (managed: true); ręczne reguły z Grafany są do odczytu i pauzowania.',
+        body: updateAlertRuleSchema,
+    }, asyncHandler(async (req, res) => {
+        const { threshold, evaluator, reducer, ...rest } = parseBody(updateAlertRuleSchema, req.body);
+        const changes: AlertRuleChanges = { ...rest };
+
+        if (threshold !== undefined || evaluator !== undefined || reducer !== undefined) {
+            const current = (await c.alertRules.get(req.params.uid)).toProps().condition;
+            changes.condition = {
+                threshold: threshold ?? current.threshold,
+                evaluator: evaluator ?? current.evaluator,
+                reducer: reducer ?? current.reducer,
+            };
+        }
+        res.json(alertRuleJson(await c.alertRules.update(req.params.uid, changes)));
+    }));
+
+    r.post('/:uid/pause', { tag, summary: 'Wstrzymanie reguły' }, asyncHandler(async (req, res) => {
+        res.json(alertRuleJson(await c.alertRules.setPaused(req.params.uid, true)));
+    }));
+
+    r.post('/:uid/resume', { tag, summary: 'Wznowienie reguły' }, asyncHandler(async (req, res) => {
+        res.json(alertRuleJson(await c.alertRules.setPaused(req.params.uid, false)));
+    }));
+
+    r.delete('/:uid', { tag, summary: 'Usunięcie reguły', produces: 'none' }, asyncHandler(async (req, res) => {
+        await c.alertRules.delete(req.params.uid);
+        res.status(204).end();
+    }));
+
+    return r.router;
+}

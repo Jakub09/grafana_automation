@@ -1,0 +1,49 @@
+{
+  "name": "grafana-automation",
+  "version": "1.0.0",
+  "description": "Automatyzacja Grafany: dashboardy i alerty ze schematu InfluxDB, e-maile z wykresami dla alertów, raporty cykliczne",
+  "main": "dist/server.js",
+  "bin": {
+    "grafana-automation": "dist/cli.js"
+  },
+  "scripts": {
+    "dev": "tsx watch --env-file=.env server.ts",
+    "cli": "tsx --env-file=.env cli.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node --env-file=.env dist/server.js",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test \"test/**/*.test.ts\"",
+    "env:up": "sh dev/compose.sh up -d influxdb grafana mailpit && npm run env:setup",
+    "env:setup": "tsx dev/scripts/setup.ts",
+    "env:app": "sh dev/compose.sh --profile app up -d --build --force-recreate --no-deps app",
+    "env:feed": "tsx dev/scripts/influx-seed.ts --follow",
+    "env:logs": "sh dev/compose.sh --profile app logs -f",
+    "env:down": "sh dev/compose.sh --profile app down -v",
+    "env:recreate": "sh dev/compose.sh --profile app down && npm run env:up",
+    "dev:local": "tsx watch --env-file=.env.dev server.ts",
+    "cli:dev": "tsx --env-file=.env.dev cli.ts",
+    "test:e2e": "sh dev/compose.sh --profile app build app && sh dev/compose.sh --profile app run --rm -e E2E=1 app node --import tsx --test \"test/e2e/*.test.ts\"",
+    "schemas": "tsx tools/generate-schemas.ts",
+    "bundle": "node tools/pack.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.7.9",
+    "canvas": "^3.1.0",
+    "express": "^4.21.2",
+    "nodemailer": "10.0.11",
+    "sharp": "^0.35.5",
+    "swagger-ui-dist": "5.33.0",
+    "zod": "^3.25.76",
+    "zod-to-json-schema": "3.25.2"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.10.2",
+    "@types/nodemailer": "8.0.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

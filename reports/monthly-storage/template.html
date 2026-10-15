@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <title>{{REPORT_TITLE}}</title>
+</head>
+<!-- Układ tabelowy o stałej szerokości (808 px) - zgodny z Outlookiem -->
+<body style="margin:0;padding:0;background-color:#f3f4f6;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#f3f4f6">
+    <tr>
+      <td align="center" style="padding:24px 8px;">
+        <table role="presentation" width="808" cellspacing="0" cellpadding="0" border="0" bgcolor="#ffffff" style="width:808px;background-color:#ffffff;">
+          <tr>
+            <td bgcolor="#1F60C4" style="background-color:#1F60C4;padding:16px 24px;font-family:Arial,Helvetica,sans-serif;color:#ffffff;">
+              <div style="font-size:20px;font-weight:bold;">{{REPORT_TITLE}}</div>
+              <div style="font-size:13px;margin-top:4px;">Okres: {{PERIOD_FROM}} – {{PERIOD_TO}} · wygenerowano {{GENERATED_AT}}</div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:20px 24px;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#111827;">
+              <p style="margin:0 0 8px;">{{REPORT_DESCRIPTION}}</p>
+              <!-- ramka "wymaga uwagi" tylko, gdy są pozycje (warunki "attention" w report.json) -->
+              {{#IF ATTENTION}}{{ATTENTION}}{{/IF}}
+              {{CHARTS}}
+              {{RANKINGS}}
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

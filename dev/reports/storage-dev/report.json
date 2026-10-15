@@ -1,0 +1,118 @@
+{
+  "$schema": "../../../schemas/report.schema.json",
+  "title": "DEV: raport zajętości storage",
+  "description": "Raport testowy na danych z dev/scripts/influx-seed.ts.",
+  "template": "template.html",
+  "timeRange": "7d",
+  "charts": [
+    {
+      "id": "lpar1",
+      "title": "LPAR1 - wszystkie SGN (typ 1)",
+      "unit": "decgbytes",
+      "yLabel": "Zajętość",
+      "queries": [
+        {
+          "alias": "$tag_SGN",
+          "query": "SELECT mean(\"VAL\") FROM \"HF.STG_SPACE\" WHERE \"LPAR\" = 'LPAR1' AND \"MYTYPE\" = '1' AND $timeFilter GROUP BY time($__interval), \"SGN\" fill(null)"
+        }
+      ],
+      "analyses": [
+        {
+          "type": "moving-average",
+          "window": "24h"
+        }
+      ],
+      "compare": {
+        "period": "previous",
+        "label": "poprzedni tydzień"
+      },
+      "attention": {
+        "above": 1800
+      }
+    },
+    {
+      "id": "lpar2-sg1",
+      "title": "LPAR2 / SG1 - 30 dni",
+      "unit": "decgbytes",
+      "queries": [
+        {
+          "alias": "Typ 1",
+          "color": "blue",
+          "query": "SELECT mean(\"VAL\") FROM \"HF.STG_SPACE\" WHERE \"LPAR\" = 'LPAR2' AND \"SGN\" = 'SG1' AND \"MYTYPE\" = '1' AND $timeFilter GROUP BY time($__interval) fill(null)"
+        },
+        {
+          "alias": "Typ 2",
+          "color": "orange",
+          "query": "SELECT mean(\"VAL\") FROM \"HF.STG_SPACE\" WHERE \"LPAR\" = 'LPAR2' AND \"SGN\" = 'SG1' AND \"MYTYPE\" = '2' AND $timeFilter GROUP BY time($__interval) fill(null)"
+        }
+      ],
+      "timeRange": {
+        "from": "now-30d/d",
+        "to": "now"
+      },
+      "interval": "6h",
+      "analyses": [
+        {
+          "type": "trend",
+          "series": [
+            "Typ 1"
+          ],
+          "forecast": "30d",
+          "threshold": 2048
+        },
+        {
+          "type": "threshold",
+          "value": 2048,
+          "label": "Limit 2 TB"
+        }
+      ]
+    },
+    {
+      "id": "no-data",
+      "title": "Seria bez danych (test komunikatu)",
+      "queries": [
+        {
+          "alias": "brak",
+          "query": "SELECT mean(\"VAL\") FROM \"HF.STG_SPACE\" WHERE \"LPAR\" = 'NIE_ISTNIEJE' AND $timeFilter GROUP BY time($__interval)"
+        }
+      ]
+    }
+  ],
+  "output": {
+    "formats": [
+      "html",
+      "pdf"
+    ]
+  },
+  "email": {
+    "recipients": [
+      "storage-team@dev.local"
+    ],
+    "subject": "[RAPORT] {title} - {date}{attention}",
+    "attachPdf": true
+  },
+  "rankings": [
+    {
+      "id": "top-growth",
+      "title": "Najszybciej rosnące storage groupy (30 dni)",
+      "unit": "decgbytes",
+      "timeRange": "30d",
+      "interval": "1d",
+      "metric": "rate",
+      "limit": 5,
+      "threshold": 2048,
+      "attention": {
+        "forecast": {
+          "threshold": 2048,
+          "within": "60d"
+        }
+      },
+      "queries": [
+        {
+          "alias": "$tag_LPAR / $tag_SGN",
+          "query": "SELECT mean(\"VAL\") FROM \"HF.STG_SPACE\" WHERE \"MYTYPE\" = '1' AND $timeFilter GROUP BY time($__interval), \"LPAR\", \"SGN\" fill(none)"
+        }
+      ]
+    }
+  ]
+}

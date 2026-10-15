@@ -1,0 +1,59 @@
+{
+  "$schema": "../../schemas/blueprint.schema.json",
+  "description": "DEV: zajętość storage groups (dane z dev/scripts/influx-seed.ts)",
+  "measurement": "HF.STG_SPACE",
+  "field": "VAL",
+  "aggregation": "mean",
+  "grouping": {
+    "dashboardTag": "LPAR",
+    "panelTag": "SGN",
+    "seriesTag": "MYTYPE"
+  },
+  "filters": {
+    "MYTYPE": {
+      "exclude": [
+        "3"
+      ]
+    }
+  },
+  "dashboardTitle": "{dashboard} - {measurement}",
+  "panelTitle": "{dashboard} / {panel}",
+  "seriesAlias": "{panel} typ {series}",
+  "unit": "decgbytes",
+  "axisLabel": "Zajętość",
+  "tags": [
+    "auto-generated",
+    "dev"
+  ],
+  "summaryPanel": {
+    "title": "{dashboard} - zajętość SG [%]",
+    "filter": {
+      "MYTYPE": "3"
+    },
+    "unit": "percent",
+    "axisLabel": "Zajętość",
+    "min": 0,
+    "max": 100,
+    "thresholds": [
+      {
+        "value": 80,
+        "color": "orange"
+      },
+      {
+        "value": 90,
+        "color": "red"
+      }
+    ],
+    "height": 9
+  },
+  "alert": {
+    "threshold": 1800,
+    "evaluator": "gt",
+    "reducer": "last",
+    "pendingPeriod": "0s",
+    "lookbackSeconds": 3600,
+    "interval": "5m",
+    "ruleGroup": "storage-space-dev",
+    "severity": "warning"
+  }
+}

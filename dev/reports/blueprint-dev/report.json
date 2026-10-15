@@ -1,0 +1,52 @@
+{
+  "$schema": "../../../schemas/report.schema.json",
+  "title": "DEV: raport z blueprintu",
+  "description": "Wykresy i ranking generowane ze schematu storage-space - bez pisania zapytań. E-mail tylko, gdy coś wymaga uwagi.",
+  "template": "../storage-dev/template.html",
+  "timeRange": "7d",
+  "charts": [
+    {
+      "id": "summary",
+      "blueprint": "storage-space",
+      "layout": "summary",
+      "attention": {
+        "above": 90
+      }
+    },
+    {
+      "id": "lpar2",
+      "title": "Szczegóły",
+      "blueprint": "storage-space",
+      "layout": "panel",
+      "dashboards": [
+        "LPAR2"
+      ],
+      "compare": "previous"
+    }
+  ],
+  "rankings": [
+    {
+      "id": "growth",
+      "title": "Tempo przyrostu - wszystkie SG",
+      "blueprint": "storage-space",
+      "unit": "decgbytes",
+      "timeRange": "30d",
+      "interval": "1d",
+      "metric": "rate",
+      "limit": 10
+    }
+  ],
+  "output": {
+    "formats": [
+      "html",
+      "pdf"
+    ]
+  },
+  "email": {
+    "recipients": [
+      "storage-team@dev.local"
+    ],
+    "subject": "[UWAGA] {title}{attention}",
+    "onlyIfAttention": true
+  }
+}

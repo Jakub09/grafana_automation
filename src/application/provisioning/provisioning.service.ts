@@ -1,0 +1,452 @@
+import { AlertRule } from '../../domain/alerting/alert-rule';
+import { AlertRuleRepository } from '../../domain/alerting/alert-rule.repository';
+import { Dashboard } from '../../domain/dashboard/dashboard';
+import { DashboardRepository } from '../../domain/dashboard/dashboard.repository';
+import { Panel } from '../../domain/dashboard/panel';
+import { MetricsRepository } from '../../domain/metrics/metrics.repository';
+import { MeasurementSchema } from '../../domain/metrics/metrics.repository';
+import { parseSeriesKey, SchemaTree } from '../../domain/metrics/schema-tree';
+import { Blueprint } from '../../domain/provisioning/blueprint';
+import { BlueprintRepository } from '../../domain/provisioning/blueprint.repository';
+import {
+    describeAction, diffPanel, diffRule, PlanAction, PlanActionType, pruneQueries, SUMMARY_FIELDS,
+} from '../../domain/provisioning/provisioning-diff';
+import { PlannedAlert, PlannedDashboard, PlannedPanel, planProvisioning } from '../../domain/provisioning/provisioning-planner';
+import { NotFoundError, ValidationError } from '../../shared/errors';
+import { logger } from '../../shared/logger';
+import { metrics } from '../../shared/metrics';
+
+export interface ProvisioningDefaults {
+    folderUid?: string;
+    datasourceUid?: string;
+    /** Seria bez danych dłużej niż tyle godzin jest nieaktywna */
+    inactiveAfterHours: number;
+}
+
+export interface ProvisioningPreview {
+    blueprint: string;
+    measurement: string;
+    folderUid: string;
+    inactiveAfterHours: number;
+    dashboards: {
+        uid: string;
+        title: string;
+        active: boolean;
+        summary: string | null;
+        panels: { title: string; active: boolean; series: string[]; inactiveSeries: string[]; alert: string | null }[];
+    }[];
+}
+
+export interface ProvisioningOptions {
+    /** Tylko wylicz zmiany (plan) - nic nie zapisuj */
+    dryRun?: boolean;
+    /** Zastosuj zmiany blueprintu w istniejących panelach i regułach (zapytania, jednostki, progi...) */
+    update?: boolean;
+    /** Usuń panele i serie nieaktywne (wraz z regułami), a całkiem nieaktywne dashboardy - w całości */
+    prune?: boolean;
+}
+
+export interface ProvisioningResult {
+    dashboardUid: string;
+    title: string;
+    /** inactive - dashboard nie istnieje, a jego dane są nieaktywne: nie jest tworzony */
+    status: 'created' | 'updated' | 'unchanged' | 'inactive' | 'deleted';
+    /** true - wynik symulacji (--dry-run / plan), nic nie zostało zapisane */
+    dryRun: boolean;
+    panelsAdded: number;
+    panelsUpdated: number;
+    panelsRemoved: number;
+    alertRulesCreated: number;
+    alertRulesUpdated: number;
+    alertRulesDeleted: number;
+    alertRulesPaused: number;
+    alertRulesResumed: number;
+    /** Dodano panel podsumowania na górze dashboardu */
+    summaryAdded: boolean;
+    inactivePanels: string[];
+    /** Wszystkie wyliczone zmiany; pominięte (bez --update / --prune) mają pole "skipped" */
+    actions: PlanAction[];
+}
+
+const NEEDS_UPDATE = 'wymaga --update';
+const NEEDS_PRUNE = 'wymaga --prune';
+
+const COUNTERS: Partial<Record<PlanActionType, keyof ProvisioningResult>> = {
+    'add-panel': 'panelsAdded',
+    'update-panel': 'panelsUpdated',
+    'prune-series': 'panelsUpdated',
+    'remove-panel': 'panelsRemoved',
+    'create-rule': 'alertRulesCreated',
+    'update-rule': 'alertRulesUpdated',
+    'delete-rule': 'alertRulesDeleted',
+    'pause-rule': 'alertRulesPaused',
+    'resume-rule': 'alertRulesResumed',
+};
+
+/**
+ * Generuje dashboardy, panele i reguły alertów ze schematu InfluxDB według blueprintu.
+ * Domyślnie (sync): tworzy brakujące dashboardy, panele i ich reguły; reguły paneli bez danych
+ * pauzuje (i wznawia, gdy dane wrócą). Zmiany istniejących paneli/reguł tylko z --update,
+ * usuwanie nieaktywnych paneli, serii i dashboardów tylko z --prune. Ręczne panele nie są ruszane.
+ */
+export class ProvisioningService {
+    constructor(
+        private readonly blueprints: BlueprintRepository,
+        private readonly metrics: MetricsRepository,
+        private readonly dashboards: DashboardRepository,
+        private readonly alertRules: AlertRuleRepository,
+        private readonly defaults: ProvisioningDefaults,
+    ) {}
+
+    public listBlueprints(): Promise<Blueprint[]> {
+        return this.blueprints.list();
+    }
+
+    public async getBlueprint(name: string): Promise<Blueprint> {
+        const blueprint = await this.blueprints.findByName(name);
+        if (!blueprint) throw new NotFoundError(`Blueprint ${name} nie istnieje`);
+        return blueprint;
+    }
+
+    // --- Dodawanie nowych schematów ---
+
+    public listMeasurements(database?: string): Promise<string[]> {
+        return this.metrics.listMeasurements(database);
+    }
+
+    public inspect(measurement: string, database?: string): Promise<MeasurementSchema> {
+        return this.metrics.describeMeasurement(measurement, database);
+    }
+
+    /**
+     * Szkic blueprintu dla pomiaru: tagi o najmniejszej liczbie wartości stają się seriami,
+     * kolejne - dashboardami, a następne - panelami. Do sprawdzenia i uzupełnienia przez użytkownika.
+     */
+    public async createDraft(name: string, measurement: string, options: { database?: string; overwrite?: boolean } = {}) {
+        const schema = await this.inspect(measurement, options.database);
+        if (schema.tags.length === 0 && schema.fields.length === 0) {
+            throw new NotFoundError(`Pomiar ${measurement} nie istnieje albo nie ma danych`);
+        }
+        const tags = schema.tags.filter(t => t.valueCount > 0).sort((a, b) => a.valueCount - b.valueCount).map(t => t.key);
+        const numeric = schema.fields.filter(f => ['float', 'integer'].includes(f.type)).map(f => f.key);
+        if (tags.length === 0) throw new ValidationError(`Pomiar ${measurement} nie ma tagów - nie da się wyznaczyć paneli`);
+        if (numeric.length === 0) throw new ValidationError(`Pomiar ${measurement} nie ma pól liczbowych`);
+
+        const grouping = tags.length >= 3 ? { seriesTag: tags[0], dashboardTag: tags[1], panelTag: tags[2] }
+            : tags.length === 2 ? { dashboardTag: tags[0], panelTag: tags[1] }
+            : { panelTag: tags[0] };
+        const valueFields = !('seriesTag' in grouping) && numeric.length > 1 && numeric.length <= 4 ? { fields: numeric } : { field: numeric[0] };
+
+        const draft = {
+            description: `Szkic wygenerowany z pomiaru ${measurement} - sprawdź grupowanie, pola i tytuły`,
+            measurement,
+            ...(options.database ? { database: options.database } : {}),
+            ...valueFields,
+            aggregation: 'mean',
+            grouping,
+            dashboardTitle: grouping.dashboardTag ? '{dashboard} - {measurement}' : '{measurement}',
+            panelTitle: grouping.dashboardTag ? '{dashboard} / {panel}' : '{panel}',
+            seriesAlias: 'seriesTag' in grouping || 'fields' in valueFields ? '{panel} {series}' : '{panel}',
+            tags: ['auto-generated', name],
+        };
+        const file = await this.blueprints.saveDraft(name, draft, options.overwrite);
+        return { file, draft, schema };
+    }
+
+    // --- Generowanie ---
+
+    public async preview(name: string): Promise<ProvisioningPreview> {
+        const { blueprint, folderUid, inactiveAfterHours, plan } = await this.load(name);
+        return {
+            blueprint: blueprint.name,
+            measurement: blueprint.measurement,
+            folderUid,
+            inactiveAfterHours,
+            dashboards: plan.map(d => ({
+                uid: Dashboard.uidFor(folderUid, d.title),
+                title: d.title,
+                active: d.active,
+                summary: d.summary?.panel.title ?? null,
+                panels: d.panels.map(p => ({
+                    title: p.panel.title,
+                    active: p.active,
+                    series: p.panel.queries.map(q => q.alias ?? q.refId),
+                    inactiveSeries: p.inactiveSeries,
+                    alert: p.alert?.title ?? null,
+                })),
+            })),
+        };
+    }
+
+    /** Panele, które powstają ze schematu (z zapytaniami) - dla raportów generowanych z blueprintu */
+    public async plannedDashboards(name: string): Promise<{ database?: string; dashboards: PlannedDashboard[] }> {
+        const { blueprint, plan } = await this.load(name);
+        return { database: blueprint.database, dashboards: plan };
+    }
+
+    /** Plan zmian - to samo co apply z dryRun, z wykazem akcji pominiętych bez --update / --prune */
+    public plan(name: string, options: Omit<ProvisioningOptions, 'dryRun'> = {}): Promise<ProvisioningResult[]> {
+        return this.apply(name, { ...options, dryRun: true });
+    }
+
+    public async apply(name: string, options: ProvisioningOptions = {}): Promise<ProvisioningResult[]> {
+        const { folderUid, datasourceUid, plan } = await this.load(name);
+        const ctx: ApplyContext = {
+            folderUid, datasourceUid, now: new Date(),
+            dryRun: Boolean(options.dryRun), update: Boolean(options.update), prune: Boolean(options.prune),
+        };
+        const results: ProvisioningResult[] = [];
+        for (const planned of plan) {
+            results.push(await this.applyDashboard(planned, Dashboard.uidFor(folderUid, planned.title), ctx));
+        }
+        return results;
+    }
+
+    private datasourceOf(blueprint: Blueprint): string | undefined {
+        return blueprint.props.datasourceUid ?? this.defaults.datasourceUid;
+    }
+
+    private async load(name: string) {
+        const blueprint = await this.getBlueprint(name);
+        const folderUid = blueprint.props.folderUid ?? this.defaults.folderUid;
+        if (!folderUid) {
+            throw new ValidationError('Brak folderu docelowego: ustaw "folderUid" w blueprincie lub GRAFANA_FOLDER_UID');
+        }
+        if (!this.datasourceOf(blueprint)) {
+            throw new ValidationError('Brak źródła danych: ustaw "datasourceUid" w blueprincie lub INFLUXDB_DATASOURCE_UID');
+        }
+
+        const inactiveAfterHours = blueprint.props.inactiveAfterHours ?? this.defaults.inactiveAfterHours;
+        const since = new Date(Date.now() - inactiveAfterHours * 3600_000);
+        const [keys, active] = await Promise.all([
+            this.metrics.listSeriesKeys(blueprint.measurement, blueprint.database),
+            this.metrics.listActiveSeries(blueprint.measurement, [...blueprint.fields], since, blueprint.database),
+        ]);
+        const accepted = keys.filter(k => blueprint.accepts(parseSeriesKey(k).tags));
+        const tree = SchemaTree.fromSeriesKeys(blueprint.measurement, accepted, blueprint.grouping, active.map(a => a.tags));
+        if (tree.isEmpty) {
+            throw new NotFoundError(`Brak serii w InfluxDB dla pomiaru ${blueprint.measurement} z tagami ${JSON.stringify(blueprint.grouping)}`
+                + (Object.keys(blueprint.props.filters).length ? ' (po zastosowaniu filtrów)' : ''));
+        }
+        const datasourceUid = this.datasourceOf(blueprint);
+        return { blueprint, folderUid, inactiveAfterHours, datasourceUid, plan: planProvisioning(tree, blueprint, datasourceUid) };
+    }
+
+    /** Synchronizuje dashboard z planem; w trybie dryRun wylicza te same akcje, ale niczego nie zapisuje */
+    private async applyDashboard(planned: PlannedDashboard, uid: string, ctx: ApplyContext): Promise<ProvisioningResult> {
+        const result: ProvisioningResult = {
+            dashboardUid: uid,
+            title: planned.title,
+            status: 'unchanged',
+            dryRun: ctx.dryRun,
+            panelsAdded: 0,
+            panelsUpdated: 0,
+            panelsRemoved: 0,
+            alertRulesCreated: 0,
+            alertRulesUpdated: 0,
+            alertRulesDeleted: 0,
+            alertRulesPaused: 0,
+            alertRulesResumed: 0,
+            summaryAdded: false,
+            inactivePanels: planned.panels.filter(p => !p.active).map(p => p.panel.title),
+            actions: [],
+        };
+        /** Zapisuje akcję w wyniku; @returns true, jeśli ma zostać wykonana */
+        const record = (action: PlanAction): boolean => {
+            result.actions.push(action);
+            if (action.skipped) return false;
+            const counter = COUNTERS[action.type];
+            if (counter) (result[counter] as number)++;
+            if (!ctx.dryRun) {
+                logger.info(`[Provisioning] ${planned.title}: ${describeAction(action)}`, { dashboardUid: uid, action });
+                metrics.inc('provisioning_actions_total', { action: action.type });
+            }
+            return true;
+        };
+
+        const existing = await this.dashboards.findByUid(uid);
+        if (!existing && !planned.active) {
+            return { ...result, status: 'inactive' };
+        }
+        const rules = existing ? await this.alertRules.list({ dashboardUid: uid }) : [];
+
+        // Cały dashboard bez danych: z --prune usuwany razem z regułami (o ile nie ma ręcznie dodanych paneli)
+        const generated = new Set([...planned.panels.map(p => p.panel.title), ...(planned.summary ? [planned.summary.panel.title] : [])]);
+        const wholeDashboard = Boolean(existing && !planned.active && existing.panels.every(p => generated.has(p.title)));
+        if (existing && wholeDashboard) {
+            const remove = record({
+                type: 'delete-dashboard',
+                target: planned.title,
+                details: `paneli: ${existing.panels.length}, reguł: ${rules.length}`,
+                skipped: ctx.prune ? undefined : NEEDS_PRUNE,
+            });
+            if (remove) {
+                for (const rule of rules) {
+                    record({ type: 'delete-rule', target: rule.title });
+                    if (!ctx.dryRun) await this.alertRules.delete(rule.uid!);
+                }
+                if (!ctx.dryRun) await this.dashboards.delete(uid);
+                return { ...result, status: 'deleted' };
+            }
+        }
+
+        const dashboard = existing ?? Dashboard.create({ uid, title: planned.title, folderUid: ctx.folderUid, tags: planned.tags });
+        if (!existing) record({ type: 'create-dashboard', target: planned.title, details: `uid ${uid}` });
+
+        // 1. Panele (dopasowanie po tytule): nowe, zmienione (--update), nieaktywne (--prune)
+        const added: { panel: Panel; alert?: PlannedAlert }[] = [];
+        const removed: number[] = [];
+        let changed = false;
+        for (const plannedPanel of planned.panels) {
+            const { title } = plannedPanel.panel;
+            const panel = dashboard.findPanelByTitle(title);
+            if (!panel) {
+                if (!plannedPanel.active) continue;
+                record({
+                    type: 'add-panel',
+                    target: title,
+                    details: `serii: ${plannedPanel.panel.queries.length}${plannedPanel.alert ? ', z regułą alertu' : ''}`,
+                });
+                added.push({ panel: dashboard.addPanel(plannedPanel.panel), alert: plannedPanel.alert });
+                changed = true;
+            } else if (!plannedPanel.active) {
+                // Przy całym nieaktywnym dashboardzie wystarczy jedna (pominięta) akcja delete-dashboard
+                if (!wholeDashboard && record({ type: 'remove-panel', target: title, details: 'brak danych', skipped: ctx.prune ? undefined : NEEDS_PRUNE })) {
+                    dashboard.removePanel(panel.id);
+                    removed.push(panel.id);
+                    changed = true;
+                }
+            } else {
+                changed = this.syncPanel(dashboard, panel, plannedPanel, ctx, record) || changed;
+            }
+        }
+
+        // Panel podsumowania na górze
+        if (planned.summary) {
+            const summary = dashboard.findPanelByTitle(planned.summary.panel.title);
+            if (!summary) {
+                record({ type: 'add-summary', target: planned.summary.panel.title });
+                dashboard.addPanelAtTop(planned.summary.panel, planned.summary.height);
+                result.summaryAdded = true;
+                changed = true;
+            } else {
+                const diff = diffPanel(summary, planned.summary.panel, new Set(), SUMMARY_FIELDS);
+                if (diff.changes.length && record({
+                    type: 'update-panel', target: summary.title, changes: diff.changes, skipped: ctx.update ? undefined : NEEDS_UPDATE,
+                })) {
+                    dashboard.updatePanel(summary.id, diff.update);
+                    changed = true;
+                }
+            }
+        }
+
+        // Reguły usuwanych paneli
+        for (const rule of rules.filter(r => r.panelId !== undefined && removed.includes(r.panelId))) {
+            record({ type: 'delete-rule', target: rule.title, details: 'panel usunięty' });
+            if (!ctx.dryRun) await this.alertRules.delete(rule.uid!);
+        }
+
+        const saved = ctx.dryRun || (existing && !changed) ? dashboard
+            : existing ? await this.dashboards.update(dashboard) : await this.dashboards.create(dashboard);
+
+        // 2. Reguły alertów nowych paneli
+        for (const { panel, alert } of added) {
+            if (!alert) continue;
+            record({ type: 'create-rule', target: alert.title, details: `panel ${panel.title}` });
+            if (!ctx.dryRun) await this.alertRules.create(this.ruleFor(saved, saved.getPanel(panel.id), alert, ctx));
+        }
+
+        // 3. Reguły istniejących paneli: pauza / wznowienie wg aktywności danych, zmiany blueprintu (--update)
+        const dirty = new Set<AlertRule>();
+        for (const plannedPanel of planned.panels) {
+            const panel = saved.findPanelByTitle(plannedPanel.panel.title);
+            if (!panel || added.some(a => a.panel.id === panel.id)) continue;
+            const panelRules = rules.filter(r => r.panelId === panel.id);
+
+            for (const rule of panelRules) {
+                if (!plannedPanel.active && rule.markInactive(ctx.now) && record({ type: 'pause-rule', target: rule.title })) dirty.add(rule);
+                if (plannedPanel.active && rule.reactivate() && record({ type: 'resume-rule', target: rule.title })) dirty.add(rule);
+            }
+            if (!plannedPanel.alert) continue;
+
+            const desired = this.ruleFor(saved, panel, plannedPanel.alert, ctx);
+            const own = panelRules.filter(r => r.managed && r.toProps().ruleGroup === desired.toProps().ruleGroup);
+            if (own.length === 0) {
+                if (plannedPanel.active && record({
+                    type: 'create-rule',
+                    target: desired.title,
+                    details: `brak reguły dla panelu ${panel.title}`,
+                    skipped: ctx.update ? undefined : NEEDS_UPDATE,
+                })) {
+                    if (!ctx.dryRun) await this.alertRules.create(desired);
+                }
+                continue;
+            }
+            for (const rule of own) {
+                const diff = diffRule(rule.toProps(), desired.toProps());
+                if (diff.changes.length && record({
+                    type: 'update-rule', target: rule.title, changes: diff.changes, skipped: ctx.update ? undefined : NEEDS_UPDATE,
+                })) {
+                    rule.update(diff.update);
+                    dirty.add(rule);
+                }
+            }
+        }
+        if (!ctx.dryRun) {
+            for (const rule of dirty) await this.alertRules.update(rule);
+        }
+
+        const executed = result.actions.filter(a => !a.skipped).length;
+        result.status = !existing ? 'created' : executed > 0 ? 'updated' : 'unchanged';
+        if (result.status !== 'unchanged' && !ctx.dryRun) {
+            logger.info(`[Provisioning] ${planned.title} (${uid}): ${result.status}, akcji: ${executed}`
+                + `, pominiętych: ${result.actions.length - executed}`);
+        }
+        return result;
+    }
+
+    /** Zmiany istniejącego panelu: zapytania i jednostki (--update), serie nieaktywne (--prune) */
+    private syncPanel(
+        dashboard: Dashboard, panel: Panel, planned: PlannedPanel, ctx: ApplyContext, record: (action: PlanAction) => boolean,
+    ): boolean {
+        let changed = false;
+        const inactive = new Set(planned.inactiveQueries.map(q => q.alias ?? q.refId));
+
+        const diff = diffPanel(panel, planned.panel, inactive);
+        if (diff.changes.length && record({
+            type: 'update-panel', target: panel.title, changes: diff.changes, skipped: ctx.update ? undefined : NEEDS_UPDATE,
+        })) {
+            dashboard.updatePanel(panel.id, diff.update);
+            changed = true;
+        }
+
+        const pruned = pruneQueries(dashboard.getPanel(panel.id).queries, inactive);
+        if (pruned.changes.length && record({
+            type: 'prune-series', target: panel.title, changes: pruned.changes, skipped: ctx.prune ? undefined : NEEDS_PRUNE,
+        })) {
+            dashboard.updatePanel(panel.id, { queries: pruned.queries });
+            changed = true;
+        }
+        return changed;
+    }
+
+    private ruleFor(dashboard: Dashboard, panel: Panel, alert: PlannedAlert, ctx: ApplyContext): AlertRule {
+        return AlertRule.forPanel(dashboard, panel, alert.policy, {
+            folderUid: ctx.folderUid,
+            datasourceUid: ctx.datasourceUid,
+            query: alert.query,
+            title: alert.title,
+            summary: alert.summary,
+            showOnChart: alert.showOnChart,
+        });
+    }
+}
+
+interface ApplyContext {
+    folderUid: string;
+    datasourceUid: string | undefined;
+    now: Date;
+    dryRun: boolean;
+    update: boolean;
+    prune: boolean;
+}

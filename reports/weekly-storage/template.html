@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <title>{{REPORT_TITLE}}</title>
+</head>
+<!-- Układ tabelowy o stałej szerokości - zgodny z Outlookiem -->
+<body style="margin:0;padding:0;background-color:#f3f4f6;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#f3f4f6" style="background-color:#f3f4f6;">
+    <tr>
+      <td align="center" style="padding:24px 8px;">
+        <table role="presentation" width="860" cellspacing="0" cellpadding="0" border="0" bgcolor="#ffffff" style="width:860px;background-color:#ffffff;">
+          <tr>
+            <td bgcolor="#1F60C4" style="background-color:#1F60C4;color:#ffffff;padding:16px 24px;font-family:Arial,Helvetica,sans-serif;">
+              <div style="font-size:20px;font-weight:bold;">{{REPORT_TITLE}}</div>
+              <div style="font-size:13px;margin-top:4px;">Okres: {{PERIOD_FROM}} – {{PERIOD_TO}} · wygenerowano {{GENERATED_AT}}</div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:20px 24px;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5;color:#111827;">
+              <p style="margin:0 0 16px;">{{REPORT_DESCRIPTION}}</p>
+
+              <!-- Wybrane wykresy można rozmieścić ręcznie znacznikami CHART:id, TABLE:id, TITLE:id (w podwójnych klamrach) -->
+              <h2 style="font-size:17px;margin:8px 0;">{{TITLE:lpar1-total}}</h2>
+              {{CHART:lpar1-total}}
+              {{TABLE:lpar1-total}}
+
+              <!-- ...albo wstawić wszystkie wykresy po kolei znacznikiem CHARTS -->
+              <h2 style="font-size:17px;margin:24px 0 8px;">Szczegóły</h2>
+              {{CHART:lpar1-sg1}}
+              {{TABLE:lpar1-sg1}}
+              {{CHART:from-grafana-panel}}
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

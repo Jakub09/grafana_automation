@@ -1,0 +1,30 @@
+# Usługa systemd dla serwera HTTP (webhook Grafany + API).
+# Instalacja:
+#   sudo cp deploy/grafana-automation.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now grafana-automation
+#   journalctl -u grafana-automation -f
+[Unit]
+Description=grafana-automation (webhook alertów Grafany, API, provisioning)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=grafana-automation
+Group=grafana-automation
+WorkingDirectory=/opt/grafana-automation
+ExecStart=/usr/bin/node --env-file=/opt/grafana-automation/.env dist/server.js
+Restart=on-failure
+RestartSec=5
+Environment=NODE_ENV=production
+Environment=TZ=Europe/Warsaw
+
+# Utwardzenie
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/grafana-automation/logs /opt/grafana-automation/plots /opt/grafana-automation/reports-output
+
+[Install]
+WantedBy=multi-user.target

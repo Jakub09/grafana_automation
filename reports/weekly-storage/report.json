@@ -1,0 +1,80 @@
+{
+  "$schema": "../../schemas/report.schema.json",
+  "title": "Tygodniowy raport zajętości storage",
+  "description": "Zajętość storage groups z ostatnich 7 dni.",
+  "template": "template.html",
+  "timeRange": {
+    "from": "now-7d/d",
+    "to": "now-1d/d"
+  },
+  "charts": [
+    {
+      "id": "lpar1-total",
+      "title": "LPAR1 - zajętość wszystkich SGN",
+      "unit": "decgbytes",
+      "yLabel": "Zajętość",
+      "queries": [
+        {
+          "alias": "$tag_SGN",
+          "query": "SELECT mean(\"VAL\") FROM \"HF.STG_SPACE\" WHERE \"LPAR\" = 'LPAR1' AND $timeFilter GROUP BY time($__interval), \"SGN\" fill(null)"
+        }
+      ],
+      "analyses": [
+        {
+          "type": "moving-average",
+          "window": "24h",
+          "hideSource": true
+        }
+      ]
+    },
+    {
+      "id": "lpar1-sg1",
+      "title": "LPAR1 / SG1 - poprzedni miesiąc",
+      "unit": "decgbytes",
+      "queries": [
+        {
+          "alias": "Typ 1",
+          "query": "SELECT mean(\"VAL\") FROM \"HF.STG_SPACE\" WHERE \"LPAR\" = 'LPAR1' AND \"SGN\" = 'SG1' AND \"MYTYPE\" = '1' AND $timeFilter GROUP BY time($__interval) fill(null)",
+          "color": "blue"
+        },
+        {
+          "alias": "Typ 2",
+          "query": "SELECT mean(\"VAL\") FROM \"HF.STG_SPACE\" WHERE \"LPAR\" = 'LPAR1' AND \"SGN\" = 'SG1' AND \"MYTYPE\" = '2' AND $timeFilter GROUP BY time($__interval) fill(null)",
+          "color": "orange"
+        }
+      ],
+      "timeRange": {
+        "from": "now-1M/M",
+        "to": "now-1M/M"
+      },
+      "interval": "6h"
+    },
+    {
+      "id": "from-grafana-panel",
+      "title": "Panel z Grafany (zapytania pobierane z dashboardu)",
+      "panel": {
+        "dashboardUid": "<dashboard-uid>",
+        "panelId": 1
+      }
+    }
+  ],
+  "output": {
+    "formats": [
+      "html",
+      "pdf"
+    ],
+    "fileName": "{id}-{date}",
+    "pdf": {
+      "format": "A4",
+      "landscape": false
+    }
+  },
+  "email": {
+    "enabled": true,
+    "recipients": [
+      "storage-team@local.internal"
+    ],
+    "subject": "[RAPORT] {title} - {date}",
+    "attachPdf": true
+  }
+}

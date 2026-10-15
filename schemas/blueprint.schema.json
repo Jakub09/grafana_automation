@@ -1,0 +1,332 @@
+{
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string"
+    },
+    "measurement": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Pomiar InfluxDB"
+    },
+    "database": {
+      "type": "string",
+      "description": "Baza InfluxDB (domyślnie INFLUXDB_DATABASE)"
+    },
+    "datasourceUid": {
+      "type": "string",
+      "description": "Źródło danych Grafany dla paneli i alertów (domyślnie INFLUXDB_DATASOURCE_UID)"
+    },
+    "field": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Pole z wartością"
+    },
+    "fields": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 1,
+      "description": "Kilka pól - bez grouping.seriesTag każde pole to osobna seria na panelu"
+    },
+    "aggregation": {
+      "type": "string",
+      "enum": [
+        "mean",
+        "max",
+        "min",
+        "last",
+        "sum"
+      ],
+      "default": "mean"
+    },
+    "grouping": {
+      "type": "object",
+      "properties": {
+        "dashboardTag": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Tag wyznaczający dashboard; bez niego - jeden wspólny dashboard"
+        },
+        "panelTag": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Tag wyznaczający panel"
+        },
+        "seriesTag": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Tag wyznaczający serię na panelu"
+        }
+      },
+      "required": [
+        "panelTag"
+      ],
+      "additionalProperties": false
+    },
+    "filters": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "include": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Tylko te wartości (wzorce z *, np. \"LPAR*\")"
+          },
+          "exclude": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Pomiń te wartości (wzorce z *, np. \"TEST*\")"
+          }
+        },
+        "additionalProperties": false
+      },
+      "default": {},
+      "description": "Filtry wartości tagów, np. { \"SYSTEM\": { \"exclude\": [\"TEST*\"] } }"
+    },
+    "queries": {
+      "type": "object",
+      "properties": {
+        "panel": {
+          "type": "string",
+          "description": "Własny szablon zapytania serii panelu"
+        },
+        "alert": {
+          "type": "string",
+          "description": "Własny szablon zapytania alertu"
+        }
+      },
+      "additionalProperties": false,
+      "default": {},
+      "description": "Znaczniki: {measurement} {field} {aggregation} {dashboard} {panel} {series} {where} {interval}. Zapytanie panelu musi zawierać $timeFilter i GROUP BY time($__interval)."
+    },
+    "folderUid": {
+      "type": "string",
+      "description": "Folder Grafany (domyślnie GRAFANA_FOLDER_UID)"
+    },
+    "dashboardTitle": {
+      "type": "string",
+      "default": "{dashboard} - {measurement}",
+      "description": "Wzorce: {measurement} {dashboard}"
+    },
+    "panelTitle": {
+      "type": "string",
+      "default": "{dashboard} / {panel}",
+      "description": "Wzorce: {measurement} {dashboard} {panel}"
+    },
+    "seriesAlias": {
+      "type": "string",
+      "default": "{panel} {series}",
+      "description": "Wzorce: {measurement} {dashboard} {panel} {series}"
+    },
+    "unit": {
+      "type": "string",
+      "description": "Jednostka Grafany, np. \"decgbytes\", \"percent\""
+    },
+    "axisLabel": {
+      "type": "string"
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [
+        "auto-generated"
+      ]
+    },
+    "inactiveAfterHours": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Seria bez danych dłużej niż tyle godzin jest nieaktywna (domyślnie SERIES_INACTIVE_AFTER_HOURS)"
+    },
+    "summaryPanel": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "default": "{dashboard} - zajętość [%]",
+          "description": "Tytuł; wzorce: {measurement} {dashboard}"
+        },
+        "filter": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "description": "Warunki tagów wybierające serie podsumowania, np. { \"MYTYPE\": \"3\" } - seria z procentem zajętości"
+        },
+        "field": {
+          "type": "string",
+          "description": "Pole (domyślnie pierwsze pole blueprintu)"
+        },
+        "aggregation": {
+          "type": "string",
+          "enum": [
+            "mean",
+            "max",
+            "min",
+            "last",
+            "sum"
+          ]
+        },
+        "query": {
+          "type": "string",
+          "description": "Własne zapytanie zamiast generowanego; {where} = dashboard + filter, wynik musi mieć GROUP BY tag panelu"
+        },
+        "alias": {
+          "type": "string",
+          "description": "Nazwa serii w legendzie (domyślnie $tag_<panelTag>, np. nazwa SG)"
+        },
+        "unit": {
+          "type": "string",
+          "default": "percent"
+        },
+        "axisLabel": {
+          "type": "string"
+        },
+        "min": {
+          "type": "number",
+          "default": 0
+        },
+        "max": {
+          "type": "number",
+          "default": 100
+        },
+        "thresholds": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "value": {
+                "type": "number"
+              },
+              "color": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "value",
+              "color"
+            ],
+            "additionalProperties": false
+          },
+          "default": [
+            {
+              "value": 80,
+              "color": "orange"
+            },
+            {
+              "value": 90,
+              "color": "red"
+            }
+          ],
+          "description": "Linie progów na wykresie"
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 4,
+          "maximum": 30,
+          "default": 9,
+          "description": "Wysokość panelu w siatce Grafany"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Panel na samej górze każdego dashboardu z seriami wszystkich paneli (np. procent zajętości wszystkich SG)"
+    },
+    "alert": {
+      "type": "object",
+      "properties": {
+        "threshold": {
+          "type": "number"
+        },
+        "evaluator": {
+          "type": "string",
+          "enum": [
+            "gt",
+            "lt"
+          ],
+          "default": "gt",
+          "description": "gt: alert powyżej progu, lt: poniżej"
+        },
+        "reducer": {
+          "type": "string",
+          "enum": [
+            "last",
+            "mean",
+            "max",
+            "min",
+            "sum",
+            "count"
+          ],
+          "default": "last"
+        },
+        "field": {
+          "type": "string",
+          "description": "Pole alertu (domyślnie pierwsze pole)"
+        },
+        "showOnChart": {
+          "type": "boolean",
+          "description": "Linia progu i moment przekroczenia na wykresie w mailu; domyślnie tak, chyba że jest queries.alert (np. procent przy panelu w GB)"
+        },
+        "pendingPeriod": {
+          "type": "string",
+          "pattern": "^(\\d+(ms|s|m|h|d|w))+$",
+          "default": "5m",
+          "description": "Jak długo warunek musi trwać, zanim alert się odpali"
+        },
+        "lookbackSeconds": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "default": 3600
+        },
+        "interval": {
+          "type": "string",
+          "pattern": "^(\\d+(ms|s|m|h|d|w))+$",
+          "default": "5m"
+        },
+        "ruleGroup": {
+          "type": "string",
+          "minLength": 1
+        },
+        "severity": {
+          "type": "string",
+          "default": "warning"
+        },
+        "labels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {}
+        },
+        "receiver": {
+          "type": "string",
+          "description": "Contact point Grafany (domyślnie wg polityki powiadomień)"
+        }
+      },
+      "required": [
+        "threshold",
+        "ruleGroup"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "measurement",
+    "grouping"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Blueprint schematu danych (blueprints/<nazwa>.json)"
+}

@@ -1,0 +1,731 @@
+{
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "description": {
+      "type": "string"
+    },
+    "template": {
+      "type": "string",
+      "default": "template.html",
+      "description": "Szablon HTML (ścieżka względem katalogu raportu)"
+    },
+    "timeRange": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^\\d+[smhdwMy]$",
+          "description": "Ostatni okres: \"24h\", \"7d\", \"1M\" (M - miesiąc, y - rok)"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "from": {
+              "type": "string",
+              "description": "Początek: \"now-7d\", \"now-1M/M\" (początek poprzedniego miesiąca), \"now/w\", \"2026-09-01\""
+            },
+            "to": {
+              "type": "string",
+              "description": "Koniec (domyślnie \"now\"): \"now\", \"now-1M/M\" (koniec poprzedniego miesiąca), \"2026-09-30\" (do końca dnia)"
+            }
+          },
+          "required": [
+            "from"
+          ],
+          "additionalProperties": false
+        }
+      ],
+      "description": "Zakres dat. Wyrażenia jak w Grafanie: now, now-7d, now-1M/M, now/d, albo daty YYYY-MM-DD[ HH:MM].",
+      "default": "7d"
+    },
+    "charts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[\\w.-]+$",
+            "description": "Identyfikator używany w szablonie: {{CHART:id}}, {{TABLE:id}}, {{TITLE:id}}, {{PERIOD:id}}"
+          },
+          "title": {
+            "type": "string",
+            "description": "Tytuł; przy \"blueprint\" - przedrostek tytułów wygenerowanych wykresów"
+          },
+          "yLabel": {
+            "type": "string",
+            "description": "Opis osi Y"
+          },
+          "unit": {
+            "type": "string",
+            "description": "Jednostka Grafany, np. \"decgbytes\" (automatyczne GB/TB/PB), \"percent\""
+          },
+          "timeRange": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^\\d+[smhdwMy]$",
+                "description": "Ostatni okres: \"24h\", \"7d\", \"1M\" (M - miesiąc, y - rok)"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "from": {
+                    "type": "string",
+                    "description": "Początek: \"now-7d\", \"now-1M/M\" (początek poprzedniego miesiąca), \"now/w\", \"2026-09-01\""
+                  },
+                  "to": {
+                    "type": "string",
+                    "description": "Koniec (domyślnie \"now\"): \"now\", \"now-1M/M\" (koniec poprzedniego miesiąca), \"2026-09-30\" (do końca dnia)"
+                  }
+                },
+                "required": [
+                  "from"
+                ],
+                "additionalProperties": false
+              }
+            ],
+            "description": "Zakres tego wykresu (nadpisuje zakres raportu)"
+          },
+          "interval": {
+            "type": "string",
+            "pattern": "^\\d+(s|m|h|d|w)$",
+            "description": "Stały interwał agregacji ($__interval), np. \"1h\". Domyślnie dobierany do zakresu (~500 punktów)."
+          },
+          "database": {
+            "type": "string",
+            "description": "Baza InfluxDB zapytań (domyślnie INFLUXDB_DATABASE)"
+          },
+          "analyses": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "trend"
+                    },
+                    "series": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "Etykiety serii, do których zastosować analizę (wzorce z *, np. \"SG*\"); domyślnie wszystkie"
+                    },
+                    "color": {
+                      "type": "string",
+                      "description": "Kolor serii wynikowych (nazwa z Grafany lub #RRGGBB); domyślnie wg serii źródłowej"
+                    },
+                    "label": {
+                      "type": "string",
+                      "description": "Wzorzec etykiety serii wynikowej; {series} = etykieta serii źródłowej"
+                    },
+                    "forecast": {
+                      "type": "string",
+                      "pattern": "^\\d+[smhdwMy]$",
+                      "description": "Przedłużenie trendu w przyszłość, np. \"30d\" - oś czasu wykresu zostaje poszerzona"
+                    },
+                    "threshold": {
+                      "type": "number",
+                      "description": "Próg w jednostkach danych (np. GB): notatka z datą jego osiągnięcia wg trendu"
+                    },
+                    "showRate": {
+                      "type": "boolean",
+                      "default": true,
+                      "description": "Notatka z tempem zmian na dobę, np. \"+12,4 GB/dobę\""
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ],
+                  "additionalProperties": false,
+                  "description": "Linia trendu (regresja liniowa), opcjonalnie z prognozą i datą osiągnięcia progu"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "moving-average"
+                    },
+                    "series": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "Etykiety serii, do których zastosować analizę (wzorce z *, np. \"SG*\"); domyślnie wszystkie"
+                    },
+                    "color": {
+                      "type": "string",
+                      "description": "Kolor serii wynikowych (nazwa z Grafany lub #RRGGBB); domyślnie wg serii źródłowej"
+                    },
+                    "label": {
+                      "type": "string",
+                      "description": "Wzorzec etykiety serii wynikowej; {series} = etykieta serii źródłowej"
+                    },
+                    "window": {
+                      "type": "string",
+                      "pattern": "^\\d+[smhdw]$",
+                      "description": "Szerokość okna, np. \"24h\" - średnia z ostatnich 24 godzin w każdym punkcie"
+                    },
+                    "hideSource": {
+                      "type": "boolean",
+                      "default": false,
+                      "description": "Ukryj surową serię i pokaż tylko średnią (statystyki w tabeli liczone z surowych danych)"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "window"
+                  ],
+                  "additionalProperties": false,
+                  "description": "Średnia krocząca w oknie czasowym (wygładzenie wahań)"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "threshold"
+                    },
+                    "series": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "Etykiety serii, do których zastosować analizę (wzorce z *, np. \"SG*\"); domyślnie wszystkie"
+                    },
+                    "color": {
+                      "type": "string",
+                      "description": "Kolor serii wynikowych (nazwa z Grafany lub #RRGGBB); domyślnie wg serii źródłowej"
+                    },
+                    "label": {
+                      "type": "string",
+                      "description": "Wzorzec etykiety serii wynikowej; {series} = etykieta serii źródłowej"
+                    },
+                    "value": {
+                      "type": "number",
+                      "description": "Wartość progu w jednostkach danych (np. GB)"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "value"
+                  ],
+                  "additionalProperties": false,
+                  "description": "Pozioma linia progu, np. limitu pojemności"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "threshold-crossing"
+                    },
+                    "series": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "Etykiety serii, do których zastosować analizę (wzorce z *, np. \"SG*\"); domyślnie wszystkie"
+                    },
+                    "color": {
+                      "type": "string",
+                      "description": "Kolor serii wynikowych (nazwa z Grafany lub #RRGGBB); domyślnie wg serii źródłowej"
+                    },
+                    "label": {
+                      "type": "string",
+                      "description": "Wzorzec etykiety serii wynikowej; {series} = etykieta serii źródłowej"
+                    },
+                    "value": {
+                      "type": "number",
+                      "description": "Próg w jednostkach danych (np. GB)"
+                    },
+                    "evaluator": {
+                      "type": "string",
+                      "enum": [
+                        "gt",
+                        "lt"
+                      ],
+                      "default": "gt",
+                      "description": "gt: przekroczenie w górę, lt: spadek poniżej progu"
+                    },
+                    "fallbackTime": {
+                      "type": "number",
+                      "description": "Chwila (ms) używana, gdy seria jest poza progiem przez cały widoczny okres (np. start alertu)"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "value"
+                  ],
+                  "additionalProperties": false,
+                  "description": "Pionowa linia w chwili przekroczenia progu przez serie, które są teraz poza progiem"
+                }
+              ]
+            },
+            "description": "Analizy nakładane na wykres, np. [{ \"type\": \"trend\", \"forecast\": \"30d\" }, { \"type\": \"moving-average\", \"window\": \"24h\" }]"
+          },
+          "compare": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "previous"
+              },
+              {
+                "type": "string",
+                "pattern": "^\\d+[smhdwMy]$"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "period": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "const": "previous"
+                      },
+                      {
+                        "type": "string",
+                        "pattern": "^\\d+[smhdwMy]$"
+                      }
+                    ],
+                    "default": "previous"
+                  },
+                  "overlay": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Rysuj serie okresu porównawczego (linia przerywana)"
+                  },
+                  "label": {
+                    "type": "string",
+                    "description": "Opis okresu w legendzie i tabeli (domyślnie \"poprzedni okres\")"
+                  }
+                },
+                "additionalProperties": false
+              }
+            ],
+            "description": "Porównanie z poprzednim okresem: \"previous\" (ta sama długość tuż przed), \"1M\", \"7d\", \"1y\" wstecz. Tabela dostaje kolumny ze średnią z okresu porównawczego i zmianą."
+          },
+          "attention": {
+            "type": "object",
+            "properties": {
+              "above": {
+                "type": "number",
+                "description": "Ostatnia wartość powyżej (jednostki danych, np. GB)"
+              },
+              "below": {
+                "type": "number",
+                "description": "Ostatnia wartość poniżej"
+              },
+              "growthPercent": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "Wzrost w okresie (pierwsza -> ostatnia wartość) o więcej niż tyle %"
+              },
+              "forecast": {
+                "type": "object",
+                "properties": {
+                  "threshold": {
+                    "type": "number",
+                    "description": "Próg (jednostki danych)"
+                  },
+                  "within": {
+                    "type": "string",
+                    "pattern": "^\\d+[smhdwMy]$",
+                    "description": "Horyzont prognozy, np. \"30d\""
+                  }
+                },
+                "required": [
+                  "threshold",
+                  "within"
+                ],
+                "additionalProperties": false,
+                "description": "Trend (regresja liniowa) osiągnie próg w tym czasie"
+              }
+            },
+            "additionalProperties": false,
+            "description": "Warunki \"wymaga uwagi\" sprawdzane dla każdej serii; spełnione trafiają do {{ATTENTION}}"
+          },
+          "width": {
+            "type": "integer",
+            "minimum": 300,
+            "maximum": 4000
+          },
+          "height": {
+            "type": "integer",
+            "minimum": 200,
+            "maximum": 3000
+          },
+          "queries": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "alias": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Nazwa serii w legendzie; może zawierać $tag_NAZWA"
+                },
+                "query": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Zapytanie InfluxQL z makrami $timeFilter i $__interval"
+                },
+                "color": {
+                  "type": "string",
+                  "description": "Kolor serii: nazwa z Grafany (red, blue, semi-dark-green...) lub #RRGGBB"
+                }
+              },
+              "required": [
+                "alias",
+                "query"
+              ],
+              "additionalProperties": false
+            },
+            "minItems": 1,
+            "description": "Własne zapytania InfluxDB"
+          },
+          "panel": {
+            "type": "object",
+            "properties": {
+              "dashboardUid": {
+                "type": "string",
+                "minLength": 1
+              },
+              "panelId": {
+                "type": "integer",
+                "exclusiveMinimum": 0
+              }
+            },
+            "required": [
+              "dashboardUid",
+              "panelId"
+            ],
+            "additionalProperties": false,
+            "description": "Albo: zapytania pobierane z istniejącego panelu Grafany"
+          },
+          "blueprint": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Nazwa blueprintu (plik BLUEPRINTS_PATH/<nazwa>.json) - zapytania generowane ze schematu"
+          },
+          "dashboards": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Tylko te dashboardy (wartości tagu dashboardu, wzorce z *, np. \"LPAR*\")"
+          },
+          "panels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Tylko te panele (wartości tagu panelu, np. \"SG1\")"
+          },
+          "includeInactive": {
+            "type": "boolean",
+            "description": "Także panele bez danych w okresie aktywności (domyślnie pomijane)"
+          },
+          "layout": {
+            "type": "string",
+            "enum": [
+              "panel",
+              "dashboard",
+              "summary"
+            ],
+            "default": "panel",
+            "description": "Przy \"blueprint\": panel - wykres na panel, dashboard - wykres na dashboard ze wszystkimi seriami, summary - panel podsumowania każdego dashboardu"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "default": []
+    },
+    "rankings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[\\w.-]+$",
+            "description": "Identyfikator używany w szablonie: {{RANKING:id}}, {{TITLE:id}}, {{PERIOD:id}}"
+          },
+          "title": {
+            "type": "string"
+          },
+          "unit": {
+            "type": "string",
+            "description": "Jednostka Grafany wartości, np. \"decgbytes\""
+          },
+          "timeRange": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^\\d+[smhdwMy]$",
+                "description": "Ostatni okres: \"24h\", \"7d\", \"1M\" (M - miesiąc, y - rok)"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "from": {
+                    "type": "string",
+                    "description": "Początek: \"now-7d\", \"now-1M/M\" (początek poprzedniego miesiąca), \"now/w\", \"2026-09-01\""
+                  },
+                  "to": {
+                    "type": "string",
+                    "description": "Koniec (domyślnie \"now\"): \"now\", \"now-1M/M\" (koniec poprzedniego miesiąca), \"2026-09-30\" (do końca dnia)"
+                  }
+                },
+                "required": [
+                  "from"
+                ],
+                "additionalProperties": false
+              }
+            ],
+            "description": "Okres rankingu (nadpisuje zakres raportu)"
+          },
+          "interval": {
+            "type": "string",
+            "pattern": "^\\d+(s|m|h|d|w)$",
+            "description": "Stały interwał agregacji ($__interval), np. \"1h\". Domyślnie dobierany do zakresu (~500 punktów)."
+          },
+          "database": {
+            "type": "string"
+          },
+          "metric": {
+            "type": "string",
+            "enum": [
+              "rate",
+              "change",
+              "change-percent",
+              "last"
+            ],
+            "default": "rate",
+            "description": "rate - tempo zmian na dobę (trend), change - zmiana w okresie, change-percent - zmiana w %, last - ostatnia wartość"
+          },
+          "order": {
+            "type": "string",
+            "enum": [
+              "desc",
+              "asc"
+            ],
+            "default": "desc",
+            "description": "desc - największe na górze (np. najszybciej rosnące)"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500,
+            "default": 10
+          },
+          "threshold": {
+            "type": "number",
+            "description": "Próg (jednostki danych): kolumna z datą jego osiągnięcia wg trendu"
+          },
+          "attention": {
+            "type": "object",
+            "properties": {
+              "above": {
+                "type": "number",
+                "description": "Ostatnia wartość powyżej (jednostki danych, np. GB)"
+              },
+              "below": {
+                "type": "number",
+                "description": "Ostatnia wartość poniżej"
+              },
+              "growthPercent": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "Wzrost w okresie (pierwsza -> ostatnia wartość) o więcej niż tyle %"
+              },
+              "forecast": {
+                "type": "object",
+                "properties": {
+                  "threshold": {
+                    "type": "number",
+                    "description": "Próg (jednostki danych)"
+                  },
+                  "within": {
+                    "type": "string",
+                    "pattern": "^\\d+[smhdwMy]$",
+                    "description": "Horyzont prognozy, np. \"30d\""
+                  }
+                },
+                "required": [
+                  "threshold",
+                  "within"
+                ],
+                "additionalProperties": false,
+                "description": "Trend (regresja liniowa) osiągnie próg w tym czasie"
+              }
+            },
+            "additionalProperties": false,
+            "description": "Warunki \"wymaga uwagi\" sprawdzane dla każdej serii; spełnione trafiają do {{ATTENTION}}"
+          },
+          "queries": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "alias": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Nazwa serii w legendzie; może zawierać $tag_NAZWA"
+                },
+                "query": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Zapytanie InfluxQL z makrami $timeFilter i $__interval"
+                },
+                "color": {
+                  "type": "string",
+                  "description": "Kolor serii: nazwa z Grafany (red, blue, semi-dark-green...) lub #RRGGBB"
+                }
+              },
+              "required": [
+                "alias",
+                "query"
+              ],
+              "additionalProperties": false
+            },
+            "minItems": 1,
+            "description": "Zapytania z GROUP BY tagów - każda zwrócona seria to wiersz rankingu (alias np. \"$tag_LPAR / $tag_SGN\")"
+          },
+          "blueprint": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Nazwa blueprintu (plik BLUEPRINTS_PATH/<nazwa>.json) - zapytania generowane ze schematu"
+          },
+          "dashboards": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Tylko te dashboardy (wartości tagu dashboardu, wzorce z *, np. \"LPAR*\")"
+          },
+          "panels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Tylko te panele (wartości tagu panelu, np. \"SG1\")"
+          },
+          "includeInactive": {
+            "type": "boolean",
+            "description": "Także panele bez danych w okresie aktywności (domyślnie pomijane)"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "default": [],
+      "description": "Rankingi serii, np. najszybciej rosnące storage groupy"
+    },
+    "output": {
+      "type": "object",
+      "properties": {
+        "formats": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "html",
+              "pdf"
+            ]
+          },
+          "default": [
+            "html"
+          ],
+          "description": "Formaty zapisywanych plików"
+        },
+        "directory": {
+          "type": "string",
+          "description": "Katalog wyników (domyślnie REPORTS_OUTPUT_PATH/{id}); wzorzec: {id}"
+        },
+        "fileName": {
+          "type": "string",
+          "default": "{id}-{date}",
+          "description": "Nazwa pliku bez rozszerzenia; wzorce: {id} {date} {datetime}"
+        },
+        "pdf": {
+          "type": "object",
+          "properties": {
+            "format": {
+              "type": "string",
+              "enum": [
+                "A4",
+                "A3",
+                "Letter"
+              ],
+              "default": "A4"
+            },
+            "landscape": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          "additionalProperties": false,
+          "default": {}
+        }
+      },
+      "additionalProperties": false,
+      "default": {}
+    },
+    "email": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Wysyłka e-mailem przy uruchomieniu"
+        },
+        "recipients": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "subject": {
+          "type": "string",
+          "default": "[RAPORT] {title} - {date}",
+          "description": "Wzorce: {title} {date} {attention} (\" – wymaga uwagi: N\" albo nic)"
+        },
+        "attachPdf": {
+          "type": "boolean",
+          "default": true,
+          "description": "Raport w PDF jako załącznik maila (domyślnie tak; PDF powstaje także wtedy, gdy nie ma go w output.formats)"
+        },
+        "onlyIfAttention": {
+          "type": "boolean",
+          "default": false,
+          "description": "Wyślij tylko, gdy są pozycje \"wymaga uwagi\" (pliki powstają zawsze)"
+        }
+      },
+      "additionalProperties": false,
+      "default": {}
+    }
+  },
+  "required": [
+    "title"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Definicja raportu (reports/<id>/report.json)"
+}

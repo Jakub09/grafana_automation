@@ -1,0 +1,66 @@
+{
+  "$schema": "../../../schemas/report.schema.json",
+  "title": "DEV: raport miesięczny",
+  "description": "Poprzedni pełny miesiąc kalendarzowy - storage i pamięć systemów.",
+  "template": "../storage-dev/template.html",
+  "timeRange": {
+    "from": "now-1M/M",
+    "to": "now-1M/M"
+  },
+  "charts": [
+    {
+      "id": "storage-lpar2",
+      "title": "LPAR2 - zajętość storage groups (typ 1)",
+      "unit": "decgbytes",
+      "interval": "1d",
+      "queries": [
+        {
+          "alias": "$tag_SGN",
+          "query": "SELECT mean(\"VAL\") FROM \"HF.STG_SPACE\" WHERE \"LPAR\" = 'LPAR2' AND \"MYTYPE\" = '1' AND $timeFilter GROUP BY time($__interval), \"SGN\" fill(null)"
+        }
+      ]
+    },
+    {
+      "id": "memory-pct",
+      "title": "Wykorzystanie pamięci [%]",
+      "unit": "percent",
+      "yLabel": "Użycie",
+      "timeRange": {
+        "from": "now-14d/d",
+        "to": "now"
+      },
+      "interval": "1h",
+      "queries": [
+        {
+          "alias": "$tag_SYSTEM",
+          "query": "SELECT mean(\"USED\") / (mean(\"USED\") + mean(\"FREE\")) * 100 FROM \"SYS.MEMORY\" WHERE \"SYSTEM\" !~ /^TEST/ AND $timeFilter GROUP BY time($__interval), \"SYSTEM\" fill(null)"
+        }
+      ],
+      "analyses": [
+        {
+          "type": "moving-average",
+          "window": "6h",
+          "hideSource": true
+        },
+        {
+          "type": "trend",
+          "threshold": 95,
+          "showRate": true
+        }
+      ]
+    }
+  ],
+  "output": {
+    "formats": [
+      "pdf"
+    ],
+    "fileName": "{id}-{date}",
+    "pdf": {
+      "format": "A4",
+      "landscape": true
+    }
+  },
+  "email": {
+    "enabled": false
+  }
+}

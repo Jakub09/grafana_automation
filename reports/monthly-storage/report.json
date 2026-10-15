@@ -1,0 +1,84 @@
+{
+  "$schema": "../../schemas/report.schema.json",
+  "title": "Miesięczny raport zajętości storage",
+  "description": "Poprzedni miesiąc kalendarzowy. Uruchamiany 1. dnia miesiąca z crona.",
+  "template": "template.html",
+  "timeRange": {
+    "from": "now-1M/M",
+    "to": "now-1M/M"
+  },
+  "charts": [
+    {
+      "id": "lpar1",
+      "title": "LPAR1 - zajętość storage groups",
+      "unit": "decgbytes",
+      "yLabel": "Zajętość",
+      "interval": "1d",
+      "queries": [
+        {
+          "alias": "$tag_SGN",
+          "query": "SELECT mean(\"VAL\") FROM \"HF.STG_SPACE\" WHERE \"LPAR\" = 'LPAR1' AND $timeFilter GROUP BY time($__interval), \"SGN\" fill(null)"
+        }
+      ],
+      "compare": {
+        "period": "1M",
+        "label": "miesiąc wcześniej"
+      }
+    },
+    {
+      "id": "lpar1-rok",
+      "title": "LPAR1 - trend roczny",
+      "unit": "decgbytes",
+      "timeRange": {
+        "from": "now-1y/M",
+        "to": "now-1M/M"
+      },
+      "interval": "1w",
+      "queries": [
+        {
+          "alias": "$tag_SGN",
+          "query": "SELECT max(\"VAL\") FROM \"HF.STG_SPACE\" WHERE \"LPAR\" = 'LPAR1' AND $timeFilter GROUP BY time($__interval), \"SGN\" fill(null)"
+        }
+      ],
+      "analyses": [
+        {
+          "type": "trend",
+          "forecast": "3M",
+          "threshold": 2048
+        }
+      ]
+    }
+  ],
+  "output": {
+    "formats": [
+      "html",
+      "pdf"
+    ],
+    "directory": "reports-output/archiwum/{id}",
+    "fileName": "{id}-{date}",
+    "pdf": {
+      "format": "A4",
+      "landscape": true
+    }
+  },
+  "email": {
+    "enabled": true,
+    "recipients": [
+      "storage-team@local.internal",
+      "kierownik@local.internal"
+    ],
+    "subject": "[RAPORT MIESIĘCZNY] {title} - {date}{attention}",
+    "attachPdf": true
+  },
+  "rankings": [
+    {
+      "id": "growth",
+      "title": "Najszybciej rosnące storage groupy",
+      "blueprint": "storage-space",
+      "unit": "decgbytes",
+      "interval": "1d",
+      "metric": "rate",
+      "limit": 10
+    }
+  ]
+}

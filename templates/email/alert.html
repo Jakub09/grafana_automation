@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="pl" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <title>{{HEADER_TITLE}}</title>
+  <!--[if mso]>
+  <noscript><xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml></noscript>
+  <style>table, td, div, a, span { font-family: Arial, Helvetica, sans-serif !important; }</style>
+  <![endif]-->
+</head>
+<!--
+  Szablon zgodny z Outlookiem: układ tabelowy o stałej szerokości 680 px, style inline.
+  Znaczniki: HEADER_COLOR, HEADER_LABEL, HEADER_TITLE, HEADER_SUBTITLE, SECTIONS (sekcje reguł
+  z wykresami i przyciskami - generowane przez aplikację), GENERATED_AT.
+-->
+<body style="margin:0;padding:0;background-color:#f3f4f6;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" bgcolor="#f3f4f6" style="background-color:#f3f4f6;">
+    <tr>
+      <td align="center" style="padding:24px 8px;">
+        <table role="presentation" width="680" cellspacing="0" cellpadding="0" border="0" bgcolor="#ffffff" style="width:680px;background-color:#ffffff;">
+          <tr>
+            <td bgcolor="{{HEADER_COLOR}}" style="background-color:{{HEADER_COLOR}};padding:18px 24px;font-family:Arial,Helvetica,sans-serif;color:#ffffff;">
+              <div style="font-size:12px;letter-spacing:1px;text-transform:uppercase;">{{HEADER_LABEL}}</div>
+              <div style="font-size:21px;font-weight:bold;margin-top:4px;">{{HEADER_TITLE}}</div>
+              <div style="font-size:13px;margin-top:6px;">{{HEADER_SUBTITLE}}</div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:4px 24px 12px 24px;">
+              {{SECTIONS}}
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:14px 24px;border-top:1px solid #e5e7eb;font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#6b7280;">
+              Wiadomość wygenerowana automatycznie przez grafana-automation · {{GENERATED_AT}}
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

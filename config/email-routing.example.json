@@ -1,0 +1,10 @@
+{
+  "default": "admin@local.internal",
+  "dashboards": {
+    "<dashboard-uid>": "storage-team@local.internal"
+  },
+  "panels": {
+    "<dashboard-uid>:<panel-id>": ["oncall@local.internal", "storage-team@local.internal"],
+    "<panel-id>": "oncall@local.internal"
+  }
+}
