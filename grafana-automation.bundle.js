@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /*
  * Samorozpakowujące się archiwum projektu "grafana-automation" 1.0.0.
- * Utworzone 2026-10-15T11:38:29.356Z przez tools/pack.mjs - plików: 147, rozmiar: 852 KB.
+ * Utworzone 2026-10-15T11:41:53.904Z przez tools/pack.mjs - plików: 147, rozmiar: 852 KB.
  *
  * Użycie (wymaga tylko Node.js >= 22):
  *   node grafana-automation.bundle.js [katalog]     odtwarza projekt (domyślnie ./grafana-automation)
@@ -14,7 +14,7 @@
 const META = {
   "name": "grafana-automation",
   "version": "1.0.0",
-  "createdAt": "2026-10-15T11:38:29.356Z",
+  "createdAt": "2026-10-15T11:41:53.904Z",
   "files": 147,
   "size": 872702,
   "sha256": "66265915eeef82cba1651161f013688dcfe89e166f75e5629231bbde13328fde"
