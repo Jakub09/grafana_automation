@@ -1,0 +1,11 @@
+# Wykluczenia archiwum jednoplikowego (npm run bundle) - dodatkowo do .gitignore.
+# Archiwum to czysty projekt do instalacji na serwerze (bez kontenerów), więc pomijane jest środowisko
+# deweloperskie na Dockerze / Podmanie i testy end-to-end, które z niego korzystają.
+# Pełna kopia z tymi plikami: node tools/pack.mjs --full
+Dockerfile
+.dockerignore
+compose.yaml
+dev/
+test/e2e/
+.env.dev
+.bundleignore

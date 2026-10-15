@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.env
+.env.dev
+logs/
+plots/
+reports-output/
+config/email-routing.json
+data/

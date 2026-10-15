@@ -1,0 +1,49 @@
+{
+  "$schema": "../schemas/blueprint.schema.json",
+  "description": "Zajętość storage groups (MF.STG.SPACE): dashboard na LPAR, panel na SGN, podsumowanie % na górze",
+  "measurement": "MF.STG.SPACE",
+  "database": "mfmetrics",
+  "field": "VAL",
+  "aggregation": "mean",
+  "grouping": {
+    "dashboardTag": "LPAR",
+    "panelTag": "SGN",
+    "seriesTag": "MTYPE"
+  },
+  "filters": {
+    "MTYPE": { "include": ["TOTAL.GB", "USED.GB"] }
+  },
+  "dashboardTitle": "{dashboard} - storage groups",
+  "panelTitle": "{dashboard} / {panel}",
+  "seriesAlias": "{series}",
+  "unit": "decgbytes",
+  "axisLabel": "Pojemność",
+  "tags": ["auto-generated", "storage", "mainframe"],
+  "summaryPanel": {
+    "title": "{dashboard} - zajętość SG [%]",
+    "filter": { "MTYPE": "USED.Per" },
+    "unit": "percent",
+    "axisLabel": "Zajętość",
+    "min": 0,
+    "max": 100,
+    "thresholds": [
+      { "value": 80, "color": "orange" },
+      { "value": 90, "color": "red" }
+    ],
+    "height": 9
+  },
+  "queries": {
+    "alert": "SELECT mean(\"VAL\") FROM \"MF.STG.SPACE\" WHERE \"LPAR\" = '{dashboard}' AND \"SGN\" = '{panel}' AND \"MTYPE\" = 'USED.Per' AND $timeFilter GROUP BY time({interval}) fill(none)"
+  },
+  "alert": {
+    "threshold": 90,
+    "evaluator": "gt",
+    "reducer": "last",
+    "pendingPeriod": "15m",
+    "lookbackSeconds": 3600,
+    "interval": "5m",
+    "ruleGroup": "mf-storage",
+    "severity": "warning",
+    "showOnChart": false
+  }
+}
