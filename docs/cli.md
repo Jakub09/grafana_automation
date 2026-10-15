@@ -220,6 +220,38 @@ trafia do logu (`[Provisioning] ...`, z polem `action`) i do metryki `provisioni
 **Zalecany sposób zmiany blueprintu:** edycja pliku, `provision plan <nazwa> --update`, przegląd diffu,
 `provision apply <nazwa> --update`.
 
+### `provision remove <nazwa> | --all [--dry-run] [--yes]`
+
+Usuwa z Grafany wszystko, co dany blueprint wygenerował: dashboardy, panele (także podsumowania) i reguły
+alertów. Służy do sprzątania po testach, po wycofaniu schematu albo przed wygenerowaniem wszystkiego od nowa.
+
+```text
+$ ga provision remove mf_sg_space
+Do usunięcia:
+
+deleted   LPAR1 - storage groups (8f1c...): zmian 7
+   - usunięcie reguły: [WARNING] LPAR1 / SG1
+   ...
+   - usunięcie dashboardu: LPAR1 - storage groups (paneli: 4)
+updated   LPAR2 - storage groups (2d9a...): zmian 2
+   - usunięcie reguły: [WARNING] LPAR2 / SG1
+   - usunięcie panelu: LPAR2 / SG1 (dashboard zostaje (ręczne panele: Notatki))
+
+Usunąć 9 elementów z Grafany? Tego nie da się cofnąć. [t/N] t
+```
+
+- Najpierw zawsze wyświetla listę i pyta o potwierdzenie. `--dry-run` kończy na liście, `--yes` usuwa bez pytania.
+  W skrypcie (bez terminala) `--yes` jest wymagane.
+- **Panele dodane ręcznie zostają**: dashboard z takimi panelami nie jest usuwany, znikają z niego tylko panele
+  wygenerowane i ich reguły. Reguły założone ręcznie dla ręcznych paneli też zostają.
+- Usuwa też reguły z grupy alertów blueprintu, które zostały po dashboardzie usuniętym ręcznie w Grafanie.
+- Każda akcja trafia do logu (`[Provisioning] ...`).
+- Ponowne wygenerowanie: `ga provision apply <nazwa>`. Dashboardy wracają pod tymi samymi adresami (UID z folderu
+  i tytułu).
+
+Elementy wybierane są według aktualnego blueprintu (tytuły dashboardów i paneli). Jeśli zmieniasz `dashboardTitle`
+albo `panelTitle`, uruchom `remove` **przed** zmianą, bo inaczej stare dashboardy nie zostaną rozpoznane.
+
 ## Kolejka powiadomień: `queue`
 
 Powiadomienia z Grafany czekają w trwałej kolejce, zanim zostaną wysłane ([alerty.md](alerty.md#niezawodność-kolejka-ponowienia-powtórki)).

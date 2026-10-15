@@ -120,6 +120,10 @@ export const provisioningApplySchema = z.object({
     prune: z.boolean().default(false).describe('Usuń panele i dashboardy nieaktywnych serii (zamiast pauzować reguły)'),
 }).strict();
 
+export const provisioningRemoveSchema = z.object({
+    dryRun: z.boolean().default(false).describe('Tylko lista akcji, bez usuwania'),
+}).strict();
+
 const flag = z.enum(['true', 'false']).optional().transform(v => v === 'true');
 
 export const provisioningPlanQuerySchema = z.object({

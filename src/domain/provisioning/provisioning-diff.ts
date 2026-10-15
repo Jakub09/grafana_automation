@@ -4,7 +4,7 @@ import { Panel, PanelQuery, refIdFor } from '../dashboard/panel';
 
 export type PlanActionType =
     | 'create-dashboard' | 'delete-dashboard'
-    | 'add-panel' | 'add-summary' | 'update-panel' | 'prune-series' | 'remove-panel'
+    | 'add-panel' | 'add-summary' | 'update-panel' | 'prune-series' | 'remove-panel' | 'relayout'
     | 'create-rule' | 'update-rule' | 'delete-rule' | 'pause-rule' | 'resume-rule';
 
 export interface FieldChange {
@@ -30,7 +30,8 @@ const same = (a: unknown, b: unknown) => JSON.stringify(normalize(a)) === JSON.s
 
 /** Porównanie niezależne od kolejności kluczy obiektów */
 function normalize(value: unknown): unknown {
-    if (Array.isArray(value)) return value.map(normalize);
+    // pusta lista = brak (np. progi: [] zapisane w Grafanie wracają jako "brak progów")
+    if (Array.isArray(value)) return value.length ? value.map(normalize) : null;
     if (value && typeof value === 'object') {
         return Object.fromEntries(Object.entries(value).filter(([, v]) => v !== undefined).sort(([a], [b]) => a.localeCompare(b))
             .map(([k, v]) => [k, normalize(v)]));
@@ -53,7 +54,17 @@ export function diffQueries(current: readonly PanelQuery[], desired: readonly Pa
         const target = desiredByKey.get(key);
         if (target) {
             if (target.query !== q.query) changes.push({ field: `zapytanie "${key}"`, before: q.query, after: target.query });
-            queries.push({ ...q, query: target.query });
+            // kolor i styl tylko wtedy, gdy ustawia je blueprint (ręcznie nadane kolory serii zostają)
+            const style: Partial<PanelQuery> = {};
+            if (target.color !== undefined && target.color !== q.color) {
+                changes.push({ field: `kolor "${key}"`, before: q.color ?? null, after: target.color });
+                style.color = target.color;
+            }
+            if (target.dashed !== undefined && target.dashed !== Boolean(q.dashed)) {
+                changes.push({ field: `linia przerywana "${key}"`, before: Boolean(q.dashed), after: target.dashed });
+                style.dashed = target.dashed;
+            }
+            queries.push({ ...q, query: target.query, ...style });
         } else if (keep.has(key)) {
             queries.push({ ...q });
         } else {
@@ -147,6 +158,7 @@ export function describeAction(action: PlanAction): string {
         'update-panel': 'zmiana panelu',
         'prune-series': 'usunięcie serii nieaktywnych',
         'remove-panel': 'usunięcie panelu',
+        relayout: 'układ paneli',
         'create-rule': 'nowa reguła',
         'update-rule': 'zmiana reguły',
         'delete-rule': 'usunięcie reguły',

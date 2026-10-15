@@ -76,6 +76,8 @@ panel. Zawsze go sprawdź i dodaj sekcję `alert`, jeśli schemat ma mieć alert
 | `unit` | – | jednostka Grafany, np. `decgbytes` (wykresy w mailach przeliczają GB → TB → PB), `percent` |
 | `axisLabel`, `tags` | – | opis osi Y, tagi dashboardu |
 | `queries.panel`, `queries.alert` | – | własne szablony zapytań (niżej) |
+| `layout` | – | układ paneli: `{ "panelsPerRow": 3, "panelHeight": 8 }` ([niżej](#układ-paneli-layout)) |
+| `extraQueries` | – | dodatkowe zapytania w każdym panelu, np. linia progu ([niżej](#dodatkowe-zapytania-w-panelu-extraqueries)) |
 | `inactiveAfterHours` | – | próg nieaktywności dla tego schematu (domyślnie `SERIES_INACTIVE_AFTER_HOURS`) |
 | `summaryPanel` | – | panel podsumowania na górze każdego dashboardu (niżej) |
 | `alert` | – | reguła alertu dla każdego panelu (niżej) |
@@ -147,6 +149,60 @@ Gdy potrzeba czegoś innego, np. procentu z dwóch pól, można podać szablon:
 Znaczniki: `{where}` (gotowe, bezpiecznie escapowane warunki tagów dashboardu, panelu i serii), `{measurement}`,
 `{field}`, `{aggregation}`, `{dashboard}`, `{panel}`, `{series}`, `{interval}`. Szablon panelu musi zawierać
 `$timeFilter` i `GROUP BY time($__interval)`, a szablon alertu powinien kończyć się `fill(none)`.
+
+### Układ paneli (`layout`)
+
+```json
+"layout": { "panelsPerRow": 3, "panelHeight": 8 }
+```
+
+Panel podsumowania (`summaryPanel`) jest zawsze na całą szerokość na samej górze, a jego wysokość ustawia
+`summaryPanel.height`. Pod nim są panele po `panelsPerRow` w wierszu, w kolejności nazw (SG1, SG2, SG3…).
+
+| Klucz | Domyślnie | Znaczenie |
+|---|---|---|
+| `panelsPerRow` | `2` | paneli w wierszu: 1, 2, 3, 4, 6, 8 lub 12 (siatka Grafany ma 24 kolumny; 3 w wierszu = szerokość 8) |
+| `panelHeight` | `8` | wysokość panelu w jednostkach siatki (1 ≈ 30 px) |
+
+- Nowe dashboardy powstają od razu w tym układzie, a nowe panele w istniejących dashboardach trafiają na pierwsze
+  wolne miejsce.
+- **Istniejące dashboardy** są przestawiane przy `provision apply <nazwa> --update`. Plan pokazuje akcję
+  `układ paneli` z pozycjami „przed → po”. Panele dodane ręcznie trafiają pod wygenerowane, z zachowaniem
+  wzajemnego układu.
+- Dashboard z wierszami Grafany (*rows*) nie jest przestawiany.
+- Bez `layout` aplikacja nie zmienia układu istniejących dashboardów, a nowe panele dokłada po 2 w wierszu.
+
+### Dodatkowe zapytania w panelu (`extraQueries`)
+
+Do każdego panelu, po seriach, można dołożyć własne zapytania. Typowe użycie to **próg jako osobna seria**, liczony
+z danych danego panelu. Każdy SG ma inną pojemność, więc stała linia progu Grafany się tu nie sprawdzi, a seria
+„90% pojemności” tak:
+
+```json
+"extraQueries": [
+  {
+    "alias": "Próg 90%",
+    "query": "SELECT mean(\"VAL\") * 0.9 FROM \"MF.STG.SPACE\" WHERE {where} AND \"MTYPE\" = 'TOTAL.GB' AND $timeFilter GROUP BY time($__interval) fill(null)",
+    "color": "red",
+    "dashed": true
+  }
+]
+```
+
+Panel „LPAR1 / SG1” ma wtedy trzy zapytania: `A` TOTAL.GB, `B` USED.GB (serie z `seriesTag`) i `C` „Próg 90%”.
+
+| Klucz | Znaczenie |
+|---|---|
+| `alias` | nazwa serii w legendzie; wzorce `{dashboard}`, `{panel}` |
+| `query` | InfluxQL; znaczniki jak w `queries` (`{where}` = dashboard + panel + filtry, `{measurement}`, `{field}`…) oraz makra `$timeFilter`, `$__interval` |
+| `color` | kolor serii (`red`, `orange`, `#RRGGBB`…) |
+| `dashed` | linia przerywana bez wypełnienia (domyślnie `true`). Tak wygląda w Grafanie, na wykresach w mailach z alertem i w raportach |
+
+`{where}` zawiera filtry blueprintu. Jeśli `filters` wyklucza wartość tagu, z której liczysz próg, wpisz warunki
+w zapytaniu jawnie (`"LPAR" = '{dashboard}' AND "SGN" = '{panel}' AND ...`) zamiast `{where}`.
+
+Istniejące panele dostaną nowe zapytania przy `provision apply <nazwa> --update`. Plan pokaże je jako
+`seria "Próg 90%"`. Kolory ustawione ręcznie w Grafanie dla pozostałych serii zostają.
 
 ## Przykłady
 

@@ -94,3 +94,32 @@ test('Panel podsumowania: seria na każdą wartość panelTag, filtr podsumowani
     assert.equal(planned.summary!.panel.queries[0].alias, '$tag_SGN');
     assert.deepEqual(planned.summary!.panel.thresholds, [{ value: 90, color: 'red' }]);
 });
+
+test('Dodatkowe zapytania panelu (extraQueries): np. próg 90% pojemności jako trzecia seria, przerywana', () => {
+    const blueprint = new Blueprint({
+        ...base,
+        grouping: { dashboardTag: 'LPAR', panelTag: 'SGN', seriesTag: 'MTYPE' },
+        filters: { MTYPE: { include: ['TOTAL.GB', 'USED.GB'] } },
+        seriesAlias: '{series}',
+        extraQueries: [{
+            alias: 'Próg 90% ({panel})',
+            query: 'SELECT mean("{field}") * 0.9 FROM "{measurement}" WHERE {where} AND "MTYPE" = \'TOTAL.GB\' AND $timeFilter GROUP BY time($__interval)',
+            color: 'red',
+            dashed: true,
+        }],
+    });
+    const keys = ['M,LPAR=L1,MTYPE=TOTAL.GB,SGN=SG1', 'M,LPAR=L1,MTYPE=USED.GB,SGN=SG1', 'M,LPAR=L1,MTYPE=OLD.GB,SGN=SG1'];
+    const tags = keys.map(k => Object.fromEntries(k.split(',').slice(1).map(p => p.split('='))));
+    const accepted = tags.filter(t => blueprint.accepts(t));
+    const tree = SchemaTree.fromSeriesKeys('M', keys.filter((_, i) => blueprint.accepts(tags[i])), blueprint.grouping,
+        [accepted[0], accepted[1]]);
+    const [{ panels: [planned] }] = planProvisioning(tree, blueprint, 'ds');
+
+    assert.deepEqual(planned.panel.queries.map(q => [q.refId, q.alias, q.color ?? null, q.dashed ?? false]), [
+        ['A', 'TOTAL.GB', null, false],
+        ['B', 'USED.GB', null, false],
+        ['C', 'Próg 90% (SG1)', 'red', true],
+    ]);
+    assert.equal(planned.panel.queries[2].query, 'SELECT mean("VAL") * 0.9 FROM "M" WHERE "LPAR" = \'L1\' AND "SGN" = \'SG1\' '
+        + 'AND "MTYPE" =~ /^(?:TOTAL\\.GB|USED\\.GB)$/ AND "MTYPE" = \'TOTAL.GB\' AND $timeFilter GROUP BY time($__interval)');
+});

@@ -1,3 +1,4 @@
+import { GridLayout } from '../dashboard/grid-layout';
 import { AlertPolicy } from '../alerting/alert-rule';
 import { NewPanel } from '../dashboard/dashboard';
 import { refIdFor } from '../dashboard/panel';
@@ -33,6 +34,8 @@ export interface PlannedDashboard {
     panels: PlannedPanel[];
     /** Panel podsumowania wstawiany na samą górę (bez alertu) */
     summary?: { panel: Omit<NewPanel, 'gridPos'>; height: number };
+    /** Układ z blueprintu; bez niego - domyślne dokładanie po 2 w wierszu, bez przestawiania istniejących */
+    layout?: GridLayout;
     active: boolean;
 }
 
@@ -47,6 +50,7 @@ export function planProvisioning(tree: SchemaTree, blueprint: Blueprint, datasou
     return tree.dashboards.map(group => ({
         name: group.name,
         title: blueprint.dashboardTitleFor(group.name),
+        layout: blueprint.layout,
         tags: [...new Set([...tags, tree.measurement, group.name].filter(Boolean))],
         active: group.active,
         summary: summary && {
@@ -85,6 +89,15 @@ export function planProvisioning(tree: SchemaTree, blueprint: Blueprint, datasou
                 })),
             };
             const inactiveSeries = panelGroup.series.filter(s => !panelGroup.activeSeries.includes(s));
+            // dodatkowe zapytania (np. próg) po seriach; refId za seriami nieaktywnymi, żeby się nie powtarzały
+            const extraStart = series.length + inactiveSeries.length;
+            panel.queries.push(...blueprint.extraQueriesFor(group.name, panelGroup.name).map((q, i) => ({
+                refId: refIdFor(extraStart + i),
+                query: q.query,
+                alias: q.alias,
+                ...(q.color ? { color: q.color } : {}),
+                ...(q.dashed ? { dashed: true } : {}),
+            })));
             const planned = {
                 name: panelGroup.name,
                 panel,

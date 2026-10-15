@@ -1,3 +1,4 @@
+import readline from 'node:readline/promises';
 import { parseArgs } from 'node:util';
 import { createContainer, Container } from '../../bootstrap/container';
 import { parseRecipients } from '../../domain/notification/email-message';
@@ -44,6 +45,10 @@ SCHEMATY / PROVISIONING (konfiguracja: BLUEPRINTS_PATH/<nazwa>.json - jeden plik
                                       i całkiem nieaktywne dashboardy; ręcznie dodane panele zostają
       --dry-run                       symulacja (jak plan), nic nie jest zapisywane
   provision apply --all [opcje]       wszystkie blueprinty (plan --all - podobnie)
+  provision remove <nazwa> | --all [--dry-run] [--yes]
+                                      usuwa wszystko, co blueprint wygenerował: dashboardy, panele, reguły alertów;
+                                      dashboard z ręcznie dodanymi panelami zostaje (usuwane są tylko wygenerowane);
+                                      najpierw pokazuje listę i pyta o potwierdzenie (--yes - bez pytania)
 
 KOLEJKA POWIADOMIEŃ (webhook alertów; plik WEBHOOK_QUEUE_PATH)
   queue list [--status <s>] [--limit <n>]   ostatnie zadania; status: pending, processing, done, failed, duplicate
@@ -83,6 +88,7 @@ const OPTIONS = {
     limit: { type: 'string' },
     days: { type: 'string' },
     failed: { type: 'boolean' },
+    yes: { type: 'boolean', short: 'y' },
     help: { type: 'boolean', short: 'h' },
 } as const;
 
@@ -211,6 +217,47 @@ async function provisionCommand(c: Container, command: string | undefined, name:
             }
             return failed ? 1 : 0;
         }
+        case 'remove': {
+            if (!name && !opts.all) return usageError('Podaj nazwę blueprintu albo --all: provision remove <nazwa>');
+            const names = opts.all ? (await c.provisioning.listBlueprints()).map(b => b.name) : [name!];
+
+            // 1. Podgląd - zawsze
+            const preview = new Map<string, ProvisioningResult[]>();
+            for (const blueprint of names) preview.set(blueprint, await c.provisioning.remove(blueprint, { dryRun: true }));
+            const count = [...preview.values()].flat().reduce((n, r) => n + r.actions.length, 0);
+            console.log('Do usunięcia:\n');
+            for (const [blueprint, results] of preview) {
+                if (names.length > 1) console.log(`== ${blueprint}`);
+                printProvisioning(results.filter(r => r.actions.length), true);
+            }
+            if (count === 0) {
+                console.log('Nic do usunięcia - w Grafanie nie ma elementów wygenerowanych z tego blueprintu.');
+                return 0;
+            }
+            if (opts['dry-run']) return 0;
+
+            // 2. Potwierdzenie (bez terminala - tylko z --yes)
+            if (!opts.yes) {
+                if (!process.stdin.isTTY) return usageError('Usuwanie bez terminala wymaga --yes');
+                const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+                const answer = await rl.question(`\nUsunąć ${count} elementów z Grafany? Tego nie da się cofnąć. [t/N] `);
+                rl.close();
+                if (!/^(t|tak|y|yes)$/i.test(answer.trim())) {
+                    console.log('Anulowano.');
+                    return 0;
+                }
+            }
+
+            // 3. Usunięcie
+            for (const blueprint of names) {
+                const results = await c.provisioning.remove(blueprint);
+                logger.info(`[CLI] provision remove ${blueprint}: ${results.reduce((n, r) => n + r.actions.length, 0)} akcji`);
+                console.log(`\n${names.length > 1 ? `== ${blueprint}\n` : ''}Usunięto:`);
+                printProvisioning(results.filter(r => r.actions.length), false);
+            }
+            console.log('\nPonowne wygenerowanie: provision apply <nazwa>');
+            return 0;
+        }
         default:
             return usageError(`Nieznana komenda: provision ${command ?? ''}`);
     }
@@ -219,7 +266,7 @@ async function provisionCommand(c: Container, command: string | undefined, name:
 const ACTION_ICON: Record<PlanAction['type'], string> = {
     'create-dashboard': '+', 'add-panel': '+', 'add-summary': '+', 'create-rule': '+',
     'update-panel': '~', 'update-rule': '~', 'prune-series': '-',
-    'remove-panel': '-', 'delete-rule': '-', 'delete-dashboard': '-',
+    'remove-panel': '-', 'delete-rule': '-', 'delete-dashboard': '-', relayout: '~',
     'pause-rule': '‖', 'resume-rule': '▶',
 };
 

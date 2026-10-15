@@ -19,6 +19,10 @@
   "unit": "decgbytes",
   "axisLabel": "Pojemność",
   "tags": ["auto-generated", "storage", "mainframe"],
+  "layout": {
+    "panelsPerRow": 3,
+    "panelHeight": 8
+  },
   "summaryPanel": {
     "title": "{dashboard} - zajętość SG [%]",
     "filter": { "MTYPE": "USED.Per" },
@@ -32,6 +36,14 @@
     ],
     "height": 9
   },
+  "extraQueries": [
+    {
+      "alias": "Próg 90%",
+      "query": "SELECT mean(\"VAL\") * 0.9 FROM \"MF.STG.SPACE\" WHERE {where} AND \"MTYPE\" = 'TOTAL.GB' AND $timeFilter GROUP BY time($__interval) fill(null)",
+      "color": "red",
+      "dashed": true
+    }
+  ],
   "queries": {
     "alert": "SELECT mean(\"VAL\") FROM \"MF.STG.SPACE\" WHERE \"LPAR\" = '{dashboard}' AND \"SGN\" = '{panel}' AND \"MTYPE\" = 'USED.Per' AND $timeFilter GROUP BY time({interval}) fill(none)"
   },

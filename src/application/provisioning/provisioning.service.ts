@@ -3,6 +3,7 @@ import { AlertRuleRepository } from '../../domain/alerting/alert-rule.repository
 import { Dashboard } from '../../domain/dashboard/dashboard';
 import { DashboardRepository } from '../../domain/dashboard/dashboard.repository';
 import { Panel } from '../../domain/dashboard/panel';
+import { arrangeGrid, panelSize } from '../../domain/dashboard/grid-layout';
 import { MetricsRepository } from '../../domain/metrics/metrics.repository';
 import { MeasurementSchema } from '../../domain/metrics/metrics.repository';
 import { parseSeriesKey, SchemaTree } from '../../domain/metrics/schema-tree';
@@ -184,6 +185,56 @@ export class ProvisioningService {
         return { database: blueprint.database, dashboards: plan };
     }
 
+    /**
+     * Usuwa wszystko, co blueprint wygenerował: dashboardy (z regułami alertów), a z dashboardów z ręcznie dodanymi
+     * panelami - tylko panele wygenerowane i ich reguły (dashboard zostaje). Reguły grupy alertów blueprintu
+     * wskazujące usunięte / nieistniejące dashboardy też są usuwane. dryRun - tylko lista akcji.
+     */
+    public async remove(name: string, options: { dryRun?: boolean } = {}): Promise<ProvisioningResult[]> {
+        const { blueprint, folderUid, plan } = await this.load(name);
+        const dryRun = Boolean(options.dryRun);
+        const ruleGroup = blueprint.alert?.ruleGroup;
+        const results: ProvisioningResult[] = [];
+
+        for (const planned of plan) {
+            const uid = Dashboard.uidFor(folderUid, planned.title);
+            const { result, record } = this.resultFor(planned, uid, dryRun);
+            const existing = await this.dashboards.findByUid(uid);
+            const rules = await this.alertRules.list({ dashboardUid: uid });
+
+            const generatedTitles = new Set([...planned.panels.map(p => p.panel.title), ...(planned.summary ? [planned.summary.panel.title] : [])]);
+            const manual = existing?.panels.filter(p => !generatedTitles.has(p.title)) ?? [];
+            const generated = existing?.panels.filter(p => generatedTitles.has(p.title)) ?? [];
+            const generatedIds = new Set(generated.map(p => p.id));
+            // reguły paneli wygenerowanych; bez dashboardu (usunięty ręcznie w Grafanie) - reguły grupy blueprintu
+            const ofBlueprint = (r: AlertRule) => r.managed && (!ruleGroup || r.toProps().ruleGroup === ruleGroup);
+            const panelExists = (r: AlertRule) => r.panelId !== undefined && existing?.panels.some(p => p.id === r.panelId);
+            const rulesToDelete = rules.filter(r => (r.panelId !== undefined && generatedIds.has(r.panelId))
+                || (ofBlueprint(r) && !panelExists(r)));
+
+            for (const rule of rulesToDelete) {
+                record({ type: 'delete-rule', target: rule.title });
+                if (!dryRun) await this.alertRules.delete(rule.uid!);
+            }
+            if (existing && manual.length === 0) {
+                record({ type: 'delete-dashboard', target: planned.title, details: `paneli: ${existing.panels.length}` });
+                if (!dryRun) await this.dashboards.delete(uid);
+            } else if (existing && generated.length) {
+                // dashboard z ręcznie dodanymi panelami zostaje - usuwane są tylko wygenerowane
+                for (const panel of generated) {
+                    record({ type: 'remove-panel', target: panel.title, details: `dashboard zostaje (ręczne panele: ${manual.map(p => p.title).join(', ')})` });
+                    existing.removePanel(panel.id);
+                }
+                if (!dryRun) await this.dashboards.update(existing);
+            }
+            const done = result.actions.filter(a => !a.skipped).length;
+            result.status = done === 0 ? 'unchanged' : existing && manual.length ? 'updated' : 'deleted';
+            if (done && !dryRun) logger.info(`[Provisioning] ${planned.title} (${uid}): usunięto (${done} akcji)`);
+            results.push(result);
+        }
+        return results;
+    }
+
     /** Plan zmian - to samo co apply z dryRun, z wykazem akcji pominiętych bez --update / --prune */
     public plan(name: string, options: Omit<ProvisioningOptions, 'dryRun'> = {}): Promise<ProvisioningResult[]> {
         return this.apply(name, { ...options, dryRun: true });
@@ -233,12 +284,13 @@ export class ProvisioningService {
     }
 
     /** Synchronizuje dashboard z planem; w trybie dryRun wylicza te same akcje, ale niczego nie zapisuje */
-    private async applyDashboard(planned: PlannedDashboard, uid: string, ctx: ApplyContext): Promise<ProvisioningResult> {
+    /** Pusty wynik dla dashboardu i funkcja zapisu akcji (wynik, liczniki, log i metryka wykonanych akcji) */
+    private resultFor(planned: PlannedDashboard, uid: string, dryRun: boolean) {
         const result: ProvisioningResult = {
             dashboardUid: uid,
             title: planned.title,
             status: 'unchanged',
-            dryRun: ctx.dryRun,
+            dryRun,
             panelsAdded: 0,
             panelsUpdated: 0,
             panelsRemoved: 0,
@@ -257,12 +309,17 @@ export class ProvisioningService {
             if (action.skipped) return false;
             const counter = COUNTERS[action.type];
             if (counter) (result[counter] as number)++;
-            if (!ctx.dryRun) {
+            if (!dryRun) {
                 logger.info(`[Provisioning] ${planned.title}: ${describeAction(action)}`, { dashboardUid: uid, action });
                 metrics.inc('provisioning_actions_total', { action: action.type });
             }
             return true;
         };
+        return { result, record };
+    }
+
+    private async applyDashboard(planned: PlannedDashboard, uid: string, ctx: ApplyContext): Promise<ProvisioningResult> {
+        const { result, record } = this.resultFor(planned, uid, ctx.dryRun);
 
         const existing = await this.dashboards.findByUid(uid);
         if (!existing && !planned.active) {
@@ -307,7 +364,7 @@ export class ProvisioningService {
                     target: title,
                     details: `serii: ${plannedPanel.panel.queries.length}${plannedPanel.alert ? ', z regułą alertu' : ''}`,
                 });
-                added.push({ panel: dashboard.addPanel(plannedPanel.panel), alert: plannedPanel.alert });
+                added.push({ panel: dashboard.addPanel(plannedPanel.panel, planned.layout && panelSize(planned.layout)), alert: plannedPanel.alert });
                 changed = true;
             } else if (!plannedPanel.active) {
                 // Przy całym nieaktywnym dashboardzie wystarczy jedna (pominięta) akcja delete-dashboard
@@ -339,6 +396,9 @@ export class ProvisioningService {
                 }
             }
         }
+
+        // Układ z blueprintu (N paneli w wierszu, podsumowanie na całą szerokość na górze)
+        if (planned.layout && this.relayout(dashboard, planned, Boolean(existing), ctx, record)) changed = true;
 
         // Reguły usuwanych paneli
         for (const rule of rules.filter(r => r.panelId !== undefined && removed.includes(r.panelId))) {
@@ -403,6 +463,46 @@ export class ProvisioningService {
                 + `, pominiętych: ${result.actions.length - executed}`);
         }
         return result;
+    }
+
+    /**
+     * Przestawia panele według blueprintu: podsumowanie na górze, panele wygenerowane po N w wierszu (w kolejności planu),
+     * pozostałe (ręczne) pod nimi. Istniejący dashboard - tylko z --update; dashboard z wierszami (rows) - bez zmian.
+     */
+    private relayout(
+        dashboard: Dashboard, planned: PlannedDashboard, existing: boolean, ctx: ApplyContext, record: (action: PlanAction) => boolean,
+    ): boolean {
+        const layout = planned.layout!;
+        if (dashboard.hasRows) return false;
+        const summary = planned.summary ? dashboard.findPanelByTitle(planned.summary.panel.title) : undefined;
+        const generated = planned.panels
+            .map(p => dashboard.findPanelByTitle(p.panel.title))
+            .filter((p): p is Panel => Boolean(p));
+        const ids = new Set([summary?.id, ...generated.map(p => p.id)]);
+        const others = dashboard.panels.filter(p => !ids.has(p.id));
+
+        const target = arrangeGrid(
+            layout,
+            summary ? { key: String(summary.id), height: planned.summary!.height } : null,
+            generated.map(p => String(p.id)),
+            others.map(p => ({ key: String(p.id), gridPos: p.gridPos })),
+        );
+        const pos = (g: { x: number; y: number; w: number; h: number }) => `x=${g.x} y=${g.y} ${g.w}×${g.h}`;
+        const moves = dashboard.panels
+            .map(p => ({ panel: p, to: target.get(String(p.id))! }))
+            .filter(({ panel, to }) => pos(panel.gridPos) !== pos(to));
+        if (moves.length === 0) return false;
+
+        const apply = record({
+            type: 'relayout',
+            target: planned.title,
+            details: `${layout.panelsPerRow} w wierszu, wysokość ${layout.panelHeight}`,
+            changes: moves.map(({ panel, to }) => ({ field: `pozycja "${panel.title}"`, before: pos(panel.gridPos), after: pos(to) })),
+            skipped: existing && !ctx.update ? NEEDS_UPDATE : undefined,
+        });
+        if (!apply) return false;
+        for (const { panel, to } of moves) dashboard.updatePanel(panel.id, { gridPos: to });
+        return true;
     }
 
     /** Zmiany istniejącego panelu: zapytania i jednostki (--update), serie nieaktywne (--prune) */

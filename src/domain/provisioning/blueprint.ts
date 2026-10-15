@@ -1,3 +1,4 @@
+import { GridLayout } from '../dashboard/grid-layout';
 import { ValidationError } from '../../shared/errors';
 import { AlertPolicy } from '../alerting/alert-rule';
 import { quoteIdentifier, quoteString } from '../metrics/influxql';
@@ -49,6 +50,17 @@ export interface SummaryPanel {
     height: number; // wysokość w siatce Grafany
 }
 
+/**
+ * Dodatkowe zapytanie w każdym panelu (np. seria progu liczona z innej serii: 90% pojemności SG).
+ * Znaczniki jak w queries: {measurement} {field} {aggregation} {dashboard} {panel} {where} {interval}.
+ */
+export interface ExtraQuery {
+    alias: string;
+    query: string;
+    color?: string;
+    dashed?: boolean;
+}
+
 export interface BlueprintProps {
     name: string;
     description?: string;
@@ -62,6 +74,8 @@ export interface BlueprintProps {
     grouping: SchemaGrouping;
     filters: Record<string, TagFilter>;
     queries: BlueprintQueries;
+    /** Dodatkowe zapytania dokładane do każdego panelu po seriach (np. próg) */
+    extraQueries?: ExtraQuery[];
     folderUid?: string;
     // Wzorce tytułów: {measurement}, {dashboard}, {panel}, {series}
     dashboardTitle: string;
@@ -73,6 +87,8 @@ export interface BlueprintProps {
     /** Seria bez danych dłużej niż tyle godzin jest nieaktywna (nadpisuje SERIES_INACTIVE_AFTER_HOURS) */
     inactiveAfterHours?: number;
     summaryPanel?: SummaryPanel;
+    /** Układ paneli: N w wierszu, wysokość (panel podsumowania zawsze na całą szerokość na górze) */
+    layout?: GridLayout;
     alert?: BlueprintAlert;
 }
 
@@ -179,6 +195,10 @@ export class Blueprint {
             ]);
     }
 
+    public get layout(): GridLayout | undefined {
+        return this.props.layout;
+    }
+
     public get summaryPanel(): SummaryPanel | undefined {
         return this.props.summaryPanel;
     }
@@ -206,6 +226,16 @@ export class Blueprint {
         }
         return `SELECT ${aggregation}(${quoteIdentifier(field)}) FROM ${quoteIdentifier(this.props.measurement)} `
             + `WHERE ${where} AND $timeFilter GROUP BY time($__interval), ${quoteIdentifier(panelTag)} fill(null)`;
+    }
+
+    /** Dodatkowe zapytania panelu (np. próg) z podstawionymi znacznikami */
+    public extraQueriesFor(dashboard: string, panel: string): ExtraQuery[] {
+        const where = this.where(dashboard, panel);
+        return (this.props.extraQueries ?? []).map(q => ({
+            ...q,
+            alias: this.title(q.alias, dashboard, panel),
+            query: this.fill(q.query, this.templateVars(dashboard, panel, undefined, this.props.fields[0], where, '$__interval')),
+        }));
     }
 
     /** Zapytanie jednej serii panelu (z makrami Grafany) */

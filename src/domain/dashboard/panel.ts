@@ -6,6 +6,8 @@ export interface PanelQuery {
     query: string; // InfluxQL z makrami Grafany
     alias?: string;
     color?: string; // kolor serii (nazwa Grafany lub hex)
+    /** Linia przerywana bez wypełnienia (np. seria progu) */
+    dashed?: boolean;
     hidden?: boolean;
 }
 

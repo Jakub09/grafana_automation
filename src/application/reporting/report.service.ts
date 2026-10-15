@@ -404,7 +404,7 @@ export class ReportService {
             yLabel: panel.axisLabel,
             grafanaUnit: panel.unit,
             datasourceUid: panel.datasourceUid,
-            series: panel.queries.map(q => ({ query: q.query, alias: q.alias, color: q.color })),
+            series: panel.queries.map(q => ({ query: q.query, alias: q.alias, color: q.color, dashed: q.dashed })),
             yMin: panel.min,
             yMax: panel.max,
             analyses: panel.thresholds?.map(t => createAnalysis({ type: 'threshold', value: t.value, color: t.color, label: `Próg ${t.value}` })),

@@ -110,6 +110,67 @@
       "default": {},
       "description": "Znaczniki: {measurement} {field} {aggregation} {dashboard} {panel} {series} {where} {interval}. Zapytanie panelu musi zawierać $timeFilter i GROUP BY time($__interval)."
     },
+    "layout": {
+      "type": "object",
+      "properties": {
+        "panelsPerRow": {
+          "type": "number",
+          "enum": [
+            1,
+            2,
+            3,
+            4,
+            6,
+            8,
+            12
+          ],
+          "default": 2,
+          "description": "Paneli w wierszu (dzielnik 24: 1, 2, 3, 4, 6, 8, 12)"
+        },
+        "panelHeight": {
+          "type": "integer",
+          "minimum": 3,
+          "maximum": 30,
+          "default": 8,
+          "description": "Wysokość panelu w siatce Grafany (1 = ok. 30 px)"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Układ paneli na dashboardzie; panel podsumowania jest zawsze na całą szerokość na górze. Z \"provision apply --update\" także istniejące dashboardy są przestawiane."
+    },
+    "extraQueries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "alias": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Nazwa serii w legendzie; wzorce {dashboard} {panel}"
+          },
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Zapytanie InfluxQL; znaczniki jak w \"queries\" ({where} = dashboard + panel + filtry), makra $timeFilter i $__interval"
+          },
+          "color": {
+            "type": "string",
+            "description": "Kolor: nazwa z Grafany (red, orange...) lub #RRGGBB"
+          },
+          "dashed": {
+            "type": "boolean",
+            "default": true,
+            "description": "Linia przerywana bez wypełnienia (domyślnie tak - np. próg)"
+          }
+        },
+        "required": [
+          "alias",
+          "query"
+        ],
+        "additionalProperties": false
+      },
+      "description": "Dodatkowe zapytania w każdym panelu, po seriach - np. próg liczony z pojemności: 90% TOTAL.GB danego SG"
+    },
     "folderUid": {
       "type": "string",
       "description": "Folder Grafany (domyślnie GRAFANA_FOLDER_UID)"

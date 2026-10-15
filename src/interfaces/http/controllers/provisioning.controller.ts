@@ -2,7 +2,7 @@ import { Container } from '../../../bootstrap/container';
 import { ApiRegistry } from '../api-registry';
 import { asyncHandler } from '../middlewares/async-handler';
 import { blueprintJson } from '../presenters';
-import { databaseQuerySchema, parseBody, provisioningApplySchema, provisioningPlanQuerySchema } from '../validation';
+import { databaseQuerySchema, parseBody, provisioningApplySchema, provisioningPlanQuerySchema, provisioningRemoveSchema } from '../validation';
 
 export function provisioningRouter(c: Container, registry: ApiRegistry) {
     const r = registry.router('/api/provisioning');
@@ -48,6 +48,17 @@ export function provisioningRouter(c: Container, registry: ApiRegistry) {
         const options = parseBody(provisioningApplySchema, req.body);
         const results = await c.provisioning.apply(req.params.name, options);
         res.status(options.dryRun ? 200 : 201).json({ ...options, results });
+    }));
+
+    r.post('/blueprints/:name/remove', {
+        tag,
+        summary: 'Usunięcie wszystkiego, co blueprint wygenerował (dashboardy, panele, reguły)',
+        description: 'Dashboard z ręcznie dodanymi panelami zostaje - usuwane są tylko panele wygenerowane i ich reguły. '
+            + 'dryRun: true - tylko lista akcji. Tego nie da się cofnąć; ponowne wygenerowanie: apply.',
+        body: provisioningRemoveSchema,
+    }, asyncHandler(async (req, res) => {
+        const options = parseBody(provisioningRemoveSchema, req.body);
+        res.json({ ...options, results: await c.provisioning.remove(req.params.name, options) });
     }));
 
     return r.router;

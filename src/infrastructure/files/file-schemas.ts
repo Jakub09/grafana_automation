@@ -173,6 +173,21 @@ export const blueprintFileSchema = z.object({
     }).strict().default({})
         .describe('Znaczniki: {measurement} {field} {aggregation} {dashboard} {panel} {series} {where} {interval}. '
             + 'Zapytanie panelu musi zawierać $timeFilter i GROUP BY time($__interval).'),
+    layout: z.object({
+        panelsPerRow: z.union([1, 2, 3, 4, 6, 8, 12].map(n => z.literal(n)) as unknown as [z.ZodLiteral<number>, z.ZodLiteral<number>])
+            .default(2).describe('Paneli w wierszu (dzielnik 24: 1, 2, 3, 4, 6, 8, 12)'),
+        panelHeight: z.number().int().min(3).max(30).default(8).describe('Wysokość panelu w siatce Grafany (1 = ok. 30 px)'),
+    }).strict().optional()
+        .describe('Układ paneli na dashboardzie; panel podsumowania jest zawsze na całą szerokość na górze. '
+            + 'Z "provision apply --update" także istniejące dashboardy są przestawiane.'),
+    extraQueries: z.array(z.object({
+        alias: z.string().min(1).describe('Nazwa serii w legendzie; wzorce {dashboard} {panel}'),
+        query: z.string().min(1).describe('Zapytanie InfluxQL; znaczniki jak w "queries" ({where} = dashboard + panel + filtry), '
+            + 'makra $timeFilter i $__interval'),
+        color: z.string().optional().describe('Kolor: nazwa z Grafany (red, orange...) lub #RRGGBB'),
+        dashed: z.boolean().default(true).describe('Linia przerywana bez wypełnienia (domyślnie tak - np. próg)'),
+    }).strict()).optional()
+        .describe('Dodatkowe zapytania w każdym panelu, po seriach - np. próg liczony z pojemności: 90% TOTAL.GB danego SG'),
     folderUid: z.string().optional().describe('Folder Grafany (domyślnie GRAFANA_FOLDER_UID)'),
     dashboardTitle: z.string().default('{dashboard} - {measurement}').describe('Wzorce: {measurement} {dashboard}'),
     panelTitle: z.string().default('{dashboard} / {panel}').describe('Wzorce: {measurement} {dashboard} {panel}'),

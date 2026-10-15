@@ -123,7 +123,8 @@ export class Dashboard {
         return this.props.panels.find(p => p.title === title);
     }
 
-    public addPanel(input: NewPanel): Panel {
+    /** @param size rozmiar panelu dokładanego na koniec układu (domyślnie 12 × 8 - dwa w wierszu) */
+    public addPanel(input: NewPanel, size?: { w: number; h: number }): Panel {
         const occupied = [...this.props.panels.map(p => p.gridPos), ...this.props.layoutItems.map(l => l.gridPos)];
         const usedIds = [...this.props.panels.map(p => p.id), ...this.props.layoutItems.map(l => l.id)];
 
@@ -132,7 +133,7 @@ export class Dashboard {
             title: input.title,
             type: input.type ?? 'timeseries',
             description: input.description ?? '',
-            gridPos: input.gridPos ?? nextGridPosition(occupied),
+            gridPos: input.gridPos ?? nextGridPosition(occupied, size?.w, size?.h),
             datasourceUid: input.datasourceUid,
             unit: input.unit,
             axisLabel: input.axisLabel,
@@ -159,6 +160,11 @@ export class Dashboard {
         const panel = this.getPanel(panelId);
         panel.update(changes);
         return panel;
+    }
+
+    /** Układ dashboardu bez wierszy (rows) - tylko taki może być przestawiany automatycznie */
+    public get hasRows(): boolean {
+        return this.props.layoutItems.length > 0;
     }
 
     public removePanel(panelId: number): void {

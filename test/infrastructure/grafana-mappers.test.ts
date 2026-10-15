@@ -4,6 +4,7 @@ import { GrafanaDashboardMapper } from '../../src/infrastructure/grafana/dashboa
 import { alertRuleToDomain, alertRuleToGrafana } from '../../src/infrastructure/grafana/alert-rule.mapper';
 import { GrafanaDashboardResource } from '../../src/infrastructure/grafana/grafana-api.types';
 import { AlertRule } from '../../src/domain/alerting/alert-rule';
+import { Dashboard } from '../../src/domain/dashboard/dashboard';
 
 const resource: GrafanaDashboardResource = {
     apiVersion: 'dashboard.grafana.app/v1beta1',
@@ -135,4 +136,24 @@ test('Mapper dashboardu: progi i zakres osi panelu, pozycja wiersza po przesuni�
     const back = mapper.toDomain(out).findPanelByTitle('Podsumowanie')!;
     assert.deepEqual(back.thresholds, [{ value: 90, color: 'red' }]);
     assert.deepEqual([back.min, back.max], [0, 100]);
+});
+
+test('Mapper dashboardu: seria przerywana i kolor (np. pr처g z zapytania) - zapis jako override Grafany i odczyt', () => {
+    const mapper = new GrafanaDashboardMapper('v1beta1');
+    const dashboard = Dashboard.create({ title: 'D', folderUid: 'f' });
+    dashboard.addPanel({ title: 'P', queries: [
+        { refId: 'A', query: 'SELECT 1', alias: 'USED.GB' },
+        { refId: 'B', query: 'SELECT 2', alias: 'Pr처g 90%', color: 'red', dashed: true },
+    ] });
+    const resource = mapper.toResource(dashboard);
+    const overrides = (resource.spec.panels as { fieldConfig: { overrides: { matcher: { options: string }; properties: { id: string; value: unknown }[] }[] } }[])[0]
+        .fieldConfig.overrides;
+    assert.deepEqual(overrides.map(o => [o.matcher.options, o.properties.map(p => p.id)]),
+        [['Pr처g 90%', ['color', 'custom.lineStyle', 'custom.fillOpacity']]]);
+
+    const restored = mapper.toDomain(resource).panels[0].queries;
+    assert.deepEqual(restored.map(q => [q.alias, q.color ?? null, q.dashed ?? false]), [['USED.GB', null, false], ['Pr처g 90%', 'red', true]]);
+
+    // ponowny zapis nie dubluje override'처w
+    assert.equal((mapper.toResource(mapper.toDomain(resource)).spec.panels as { fieldConfig: { overrides: unknown[] } }[])[0].fieldConfig.overrides.length, 1);
 });

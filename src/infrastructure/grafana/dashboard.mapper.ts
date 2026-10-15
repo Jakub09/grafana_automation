@@ -76,10 +76,13 @@ export class GrafanaDashboardMapper {
 
 export function panelToDomain(raw: GrafanaPanel): Panel {
     const colorByName = new Map<string, string>();
+    const dashedNames = new Set<string>();
     for (const o of raw.fieldConfig?.overrides ?? []) {
         if (o.matcher?.id !== 'byName') continue;
         const color = o.properties?.find(p => p.id === 'color')?.value?.fixedColor;
         if (typeof color === 'string') colorByName.set(o.matcher.options, color);
+        const lineStyle = o.properties?.find(p => p.id === 'custom.lineStyle')?.value as { fill?: string } | undefined;
+        if (lineStyle?.fill === 'dash') dashedNames.add(o.matcher.options);
     }
 
     const queries: PanelQuery[] = (raw.targets ?? [])
@@ -89,6 +92,7 @@ export function panelToDomain(raw: GrafanaPanel): Panel {
             query: t.query!,
             ...(t.alias ? { alias: t.alias } : {}),
             ...(colorByName.has(t.alias ?? t.refId) ? { color: colorByName.get(t.alias ?? t.refId) } : {}),
+            ...(dashedNames.has(t.alias ?? t.refId) ? { dashed: true } : {}),
             ...(t.hide ? { hidden: true } : {}),
         }));
 
@@ -137,16 +141,20 @@ export function panelToGrafana(panel: Panel): GrafanaPanel {
         };
     });
 
-    // Override'y kolorów serii: zastępujemy te, którymi zarządza domena, resztę zostawiamy
+    // Override'y serii (kolor, linia przerywana): zastępujemy te, którymi zarządza domena, resztę zostawiamy
+    const MANAGED_PROPS = new Set(['color', 'custom.lineStyle', 'custom.fillOpacity']);
     const managedNames = new Set(p.queries.map(q => q.alias ?? q.refId));
     const keptOverrides = (base.fieldConfig?.overrides ?? []).filter(o =>
-        !(o.matcher?.id === 'byName' && managedNames.has(o.matcher.options) && o.properties.every(pr => pr.id === 'color'))
+        !(o.matcher?.id === 'byName' && managedNames.has(o.matcher.options) && o.properties.every(pr => MANAGED_PROPS.has(pr.id)))
     );
     const colorOverrides: GrafanaOverride[] = p.queries
-        .filter(q => q.color)
+        .filter(q => q.color || q.dashed)
         .map(q => ({
             matcher: { id: 'byName', options: q.alias ?? q.refId },
-            properties: [{ id: 'color', value: { mode: 'fixed', fixedColor: q.color } }],
+            properties: [
+                ...(q.color ? [{ id: 'color', value: { mode: 'fixed', fixedColor: q.color } }] : []),
+                ...(q.dashed ? [{ id: 'custom.lineStyle', value: { fill: 'dash', dash: [10, 10] } }, { id: 'custom.fillOpacity', value: 0 }] : []),
+            ],
         }));
 
     const defaults = base.fieldConfig?.defaults ?? {};

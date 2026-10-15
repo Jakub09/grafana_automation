@@ -20,6 +20,8 @@ export interface SeriesSpec {
     query: string;
     alias?: string;
     color?: string | null;
+    /** Linia przerywana bez wypełnienia (np. próg z zapytania) */
+    dashed?: boolean;
 }
 
 export interface ChartSpec {
@@ -50,6 +52,7 @@ export interface LabeledSeries {
     label: string;
     points: readonly DataPoint[];
     color: string | null;
+    dashed?: boolean;
 }
 
 export interface RenderedChart {
@@ -99,7 +102,7 @@ export class ChartService {
             grafanaUnit: panel.unit,
             fixedColor: panel.fixedColor,
             datasourceUid: panel.datasourceUid,
-            series: panel.visibleQueries.map(q => ({ query: q.query, alias: q.alias, color: q.color })),
+            series: panel.visibleQueries.map(q => ({ query: q.query, alias: q.alias, color: q.color, dashed: q.dashed })),
             yMin: panel.min,
             yMax: panel.max,
             // progi panelu (jak w Grafanie) jako linie na wykresie
@@ -137,7 +140,7 @@ export class ChartService {
                     label = `${label} (${Object.values(ts.tags).join(', ')})`;
                 }
                 const single = spec.series.length === 1 && !multi;
-                labeled.push({ label, points: ts.points, color: s.color ?? (single ? spec.fixedColor ?? null : null) });
+                labeled.push({ label, points: ts.points, color: s.color ?? (single ? spec.fixedColor ?? null : null), dashed: s.dashed });
             }
         });
         return labeled;
@@ -157,7 +160,7 @@ export class ChartService {
 
         const database = spec.database ?? await this.databases?.databaseFor(spec.datasourceUid);
         for (const s of await this.querySeries(spec, spec.range, database)) {
-            chart.addSeries(s.label, s.points, s.color);
+            chart.addSeries(s.label, s.points, s.color, s.dashed ? { style: { dashed: true, fill: false } } : {});
         }
         if (chart.isEmpty) return { chart };
 

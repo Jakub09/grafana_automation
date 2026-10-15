@@ -199,6 +199,7 @@ Pole `inactiveSince` oznacza regułę zapauzowaną automatycznie z powodu braku 
 | `GET` | `/api/provisioning/blueprints/:nazwa` | schemat |
 | `GET` | `/api/provisioning/blueprints/:nazwa/preview` | co powstanie, z aktywnością serii |
 | `GET` | `/api/provisioning/blueprints/:nazwa/plan?update=true&prune=true` | plan zmian (pełny diff), nic nie zapisuje |
+| `POST` | `/api/provisioning/blueprints/:nazwa/remove` | usunięcie wszystkiego, co blueprint wygenerował; body `{"dryRun": true}` = tylko lista |
 | `POST` | `/api/provisioning/blueprints/:nazwa/apply` | synchronizacja; body `{"dryRun", "update", "prune"}` (domyślnie `false`) |
 
 ```bash
