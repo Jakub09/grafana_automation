@@ -97,7 +97,7 @@
     }
   ],
   "queries": {
-    "alert": "SELECT last(\"VAL\") FROM \"MF.STG.SPACE\" WHERE \"LPAR\" = '{dashboard}' AND \"MTYPE\" = 'USED.PER' AND $timeFilter GROUP BY \"SGN\""
+    "alert": "SELECT last(\"VAL\") FROM \"MF.STG.SPACE\" WHERE \"LPAR\" = '{dashboard}' AND \"SGN\" = '{panel}' AND \"MTYPE\" = 'USED.PER' AND $timeFilter"
   },
   "alert": {
     "threshold": 90,
@@ -110,6 +110,6 @@
     "severity": "warning",
     "showOnChart": false,
     "evaluationInterval": "1h",
-    "scope": "dashboard"
+    "scope": "panel"
   }
 }
