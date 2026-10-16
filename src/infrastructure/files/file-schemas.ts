@@ -147,8 +147,18 @@ export type ReportFile = z.infer<typeof reportFileSchema>;
 // --- Blueprinty: blueprints/<nazwa>.json ---
 
 const refId = z.string().regex(/^[A-Z][A-Z0-9_]*$/, 'Wielkie litery, np. "A", "B", "C"');
-const oneSource = (q: { query?: string; expression?: string }) => Boolean(q.query) !== Boolean(q.expression);
-const ONE_SOURCE = { message: 'Podaj dokładnie jedno z pól: "query" (InfluxQL) albo "expression" (wyrażenie, np. "$A / $B")' };
+const oneSource = (q: { query?: string; expression?: string; threshold?: unknown }) => [q.query, q.expression, q.threshold].filter(Boolean).length === 1;
+const ONE_SOURCE = { message: 'Podaj dokładnie jedno z pól: "query" (InfluxQL), "expression" (wyrażenie, np. "$A / $B") albo "threshold"' };
+
+const thresholdExpression = z.object({
+    input: refId.describe('Zapytanie wejściowe, np. "B"'),
+    evaluator: z.enum(['gt', 'lt', 'within_range', 'outside_range']).default('gt')
+        .describe('gt - is above, lt - is below, within_range - is within range, outside_range - is outside range'),
+    value: z.number().optional().describe('Próg dla gt / lt, np. 90'),
+    range: z.tuple([z.number(), z.number()]).optional().describe('Zakres [od, do] dla within_range / outside_range'),
+}).strict().refine(t => (t.evaluator === 'gt' || t.evaluator === 'lt' ? t.value !== undefined && !t.range : t.range !== undefined && t.value === undefined), {
+    message: 'gt / lt wymagają "value", within_range / outside_range - "range": [od, do]',
+}).describe('Wyrażenie Grafany "Threshold": 1 gdy warunek spełniony, 0 gdy nie (dla każdego punktu), np. { "input": "B", "evaluator": "gt", "value": 90 }');
 
 /** Zapytanie panelu w blueprincie: InfluxQL albo wyrażenie Grafany (Math) */
 const panelQuery = (dashedByDefault: boolean) => z.object({
@@ -158,6 +168,7 @@ const panelQuery = (dashedByDefault: boolean) => z.object({
         + 'makra $timeFilter i $__interval'),
     expression: z.string().min(1).optional()
         .describe('Wyrażenie Grafany (Server Side Expression "Math"), np. "$A / $B", "($A - $B) / 1024", "$A / $B * 100"'),
+    threshold: thresholdExpression.optional(),
     color: z.string().optional().describe('Kolor: nazwa z Grafany (red, orange...) lub #RRGGBB'),
     dashed: z.boolean().default(dashedByDefault).describe('Linia przerywana bez wypełnienia'),
     unit: z.string().optional().describe('Jednostka tej serii, gdy inna niż panelu (np. "percentunit" dla $A / $B) - rysowana na prawej osi'),
@@ -246,7 +257,9 @@ export const blueprintFileSchema = z.object({
         pendingPeriod: duration.default('5m').describe('Jak długo warunek musi trwać, zanim alert się odpali'),
         lookbackSeconds: z.number().int().positive().default(3600),
         interval: duration.default('5m'),
-        ruleGroup: z.string().min(1),
+        ruleGroup: z.string().min(1)
+            .describe('Grupa reguł w Grafanie; "{dashboard}" daje grupę na dashboard (np. "mf-storage-{dashboard}") - '
+                + 'Grafana rozkłada ewaluację grup w czasie, więc przy setkach reguł to odciąża bazę'),
         severity: z.string().default('warning'),
         labels: z.record(z.string()).default({}),
         receiver: z.string().optional()
@@ -270,6 +283,10 @@ export const blueprintFileSchema = z.object({
             .describe('Własne węzły reguły zamiast jednego zapytania: np. A (USED.GB), B (TOTAL.GB), C = "$A / $B". '
                 + 'Warunek (reducer + próg) liczony jest z węzła conditionRefId (domyślnie ostatniego).'),
         conditionRefId: refId.optional().describe('Węzeł, z którego liczony jest warunek (domyślnie ostatni z "queries")'),
+        scope: z.enum(['panel', 'dashboard']).default('panel')
+            .describe('panel - reguła na każdy panel; dashboard - jedna reguła wielowymiarowa na dashboard: zapytanie z '
+                + 'GROUP BY tagu panelu (np. "SGN") daje instancję alertu na każdy panel - wielokrotnie mniej reguł i zapytań. '
+                + 'W zapytaniach {where} nie zawiera wtedy warunku panelu, a {panel} jest pusty.'),
     }).strict().refine(a => !a.notification || a.receiver, { message: 'alert.notification wymaga alert.receiver (contact pointu)' }).optional(),
 }).strict().refine(b => Boolean(b.field) !== Boolean(b.fields), {
     message: 'Podaj dokładnie jedno z pól: "field" albo "fields"',

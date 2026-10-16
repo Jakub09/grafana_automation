@@ -33,3 +33,17 @@ test('Wyrażenie math: błędy składni i brakujące zapytania', () => {
     assert.throws(() => new MathExpression('$A % $B'), /niezrozumiały/);
     assert.throws(() => new MathExpression('$A / $C').apply(new Map([['A', []]])), /brak zapytania C/);
 });
+
+test('Wyrażenie threshold: 1/0 dla każdego punktu (powyżej, poniżej, w zakresie, poza zakresem); walidacja parametrów', async () => {
+    const { applyThreshold, checkThreshold } = await import('../../src/domain/metrics/expression.js');
+    const input = [ts({ SGN: 'SG1' }, [[1, 85], [2, 90], [3, 95]])];
+    const values = (evaluator: 'gt' | 'lt' | 'within_range' | 'outside_range', params: number[]) =>
+        applyThreshold(input, { evaluator, params })[0].points.map(p => p.value);
+    assert.deepEqual(values('gt', [90]), [0, 0, 1]); // "is above 90"
+    assert.deepEqual(values('lt', [90]), [1, 0, 0]);
+    assert.deepEqual(values('within_range', [86, 94]), [0, 1, 0]);
+    assert.deepEqual(values('outside_range', [86, 94]), [1, 0, 1]);
+    assert.deepEqual(applyThreshold(input, { evaluator: 'gt', params: [90] })[0].tags, { SGN: 'SG1' });
+    assert.throws(() => checkThreshold({ evaluator: 'gt', params: [] }), /jednej liczby/);
+    assert.throws(() => checkThreshold({ evaluator: 'within_range', params: [1] }), /dwóch liczb/);
+});

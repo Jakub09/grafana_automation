@@ -15,7 +15,9 @@ Grafana: reguła alertu odpala
   → wysyła mail: sekcja na regułę, wykres osadzony w treści, tabela instancji, przyciski
 ```
 
-Reguły tworzone przez `provision apply` i przez API są powiązane z panelami automatycznie. Reguła założona ręcznie
+Reguły tworzone przez `provision apply` i przez API są powiązane z panelami automatycznie. Reguła wielowymiarowa
+dashboardu (`alert.scope: "dashboard"`) wskazuje panel etykietą instancji (np. `SGN`), a mail ma sekcję z wykresem
+dla każdego SG z alertem ([schematy.md](schematy.md#jedna-reguła-wielowymiarowa-na-dashboard-scope-dashboard)). Reguła założona ręcznie
 w Grafanie też zadziała, jeśli w Grafanie ustawisz jej powiązanie z panelem (*Link dashboard and panel*). Bez tego
 mail przyjdzie z komunikatem „brak wykresu”.
 

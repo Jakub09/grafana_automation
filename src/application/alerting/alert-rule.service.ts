@@ -69,7 +69,9 @@ export class AlertRuleService {
         };
 
         const nodes = input.nodes ?? (input.nodesFromPanel
-            ? panel.queries.map(q => ({ refId: q.refId, query: q.query, ...(q.type ? { type: q.type } : {}) }))
+            ? panel.queries
+                .filter(q => q.type !== 'threshold') // warunek reguły to reduce + próg na końcu
+                .map(q => ({ refId: q.refId, query: q.query, ...(q.type === 'math' ? { type: 'math' as const } : {}) }))
             : undefined);
         const rule = AlertRule.forPanel(dashboard, panel, policy, {
             folderUid: dashboard.folderUid ?? this.defaults.folderUid,

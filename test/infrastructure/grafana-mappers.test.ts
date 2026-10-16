@@ -216,3 +216,22 @@ test('Mapper reguły alertu: contact point (receiver) z ustawieniami powiadomie�
     const back = alertRuleToDomain(json).toProps();
     assert.deepEqual([back.receiver, back.notification], ['storage-team', rule.toProps().notification]);
 });
+
+test('Mapper dashboardu: wyrażenie Threshold ("input B is above 90") - zapis i odczyt', () => {
+    const mapper = new GrafanaDashboardMapper('v1beta1');
+    const dashboard = Dashboard.create({ title: 'D', folderUid: 'f' });
+    dashboard.addPanel({ title: 'P', queries: [
+        { refId: 'A', query: 'SELECT used', alias: 'USED.GB' },
+        { refId: 'B', query: 'SELECT per', alias: 'USED.PER', unit: 'percent' },
+        { refId: 'C', query: 'B', type: 'threshold', condition: { evaluator: 'gt', params: [90] }, alias: 'Powyżej 90%', unit: 'bool' },
+    ] });
+    const resource = mapper.toResource(dashboard);
+    const target = (resource.spec.panels as { targets: Record<string, unknown>[] }[])[0].targets[2];
+    assert.deepEqual(target, {
+        refId: 'C', datasource: { type: '__expr__', uid: '__expr__', name: 'Expression' }, type: 'threshold', expression: 'B', hide: undefined,
+        conditions: [{ evaluator: { type: 'gt', params: [90] } }],
+    });
+    const back = mapper.toDomain(resource).panels[0].queries[2];
+    assert.deepEqual([back.type, back.query, back.condition, back.alias, back.unit], ['threshold', 'B', { evaluator: 'gt', params: [90] }, 'Powyżej 90%', 'bool']);
+    assert.throws(() => dashboard.addPanel({ title: 'Q', queries: [{ refId: 'C', query: 'X', type: 'threshold', condition: { evaluator: 'gt', params: [1] } }] }), /wejście "X"/);
+});

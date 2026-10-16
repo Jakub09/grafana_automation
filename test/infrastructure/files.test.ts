@@ -75,3 +75,12 @@ test('Blueprint: connectNulls - true / false / próg czasu ("1h")', () => {
     assert.equal(parseWithSchema(blueprintFileSchema, { ...base, connectNulls: '1h' }, 'b.json').connectNulls, '1h');
     assert.throws(() => parseWithSchema(blueprintFileSchema, { ...base, connectNulls: 'zawsze' }, 'b.json'), /connectNulls/);
 });
+
+test('Blueprint: próg w panelQueries - "threshold": { input, evaluator, value | range }', () => {
+    const base = { measurement: 'M', field: 'VAL', grouping: { panelTag: 'P' } };
+    const queries = (threshold: Record<string, unknown>) => ({ ...base, panelQueries: [{ refId: 'B', query: 'SELECT 1' }, { refId: 'C', threshold }] });
+    assert.ok(parseWithSchema(blueprintFileSchema, queries({ input: 'B', evaluator: 'gt', value: 90 }), 'b.json'));
+    assert.ok(parseWithSchema(blueprintFileSchema, queries({ input: 'B', evaluator: 'within_range', range: [10, 90] }), 'b.json'));
+    assert.throws(() => parseWithSchema(blueprintFileSchema, queries({ input: 'B', evaluator: 'gt' }), 'b.json'), /value/);
+    assert.throws(() => parseWithSchema(blueprintFileSchema, { ...base, panelQueries: [{ refId: 'C', query: 'q', threshold: { input: 'B', value: 1 } }] }, 'b.json'), /dokładnie jedno/);
+});

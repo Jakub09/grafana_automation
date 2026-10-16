@@ -142,3 +142,29 @@ export class MathExpression {
         return result;
     }
 }
+
+/** Warunek wyrażenia "Threshold" (jak w Grafanie): powyżej, poniżej, w zakresie, poza zakresem */
+export type ThresholdEvaluator = 'gt' | 'lt' | 'within_range' | 'outside_range';
+
+export interface ThresholdCondition {
+    evaluator: ThresholdEvaluator;
+    /** gt / lt: [próg]; within_range / outside_range: [od, do] */
+    params: number[];
+}
+
+export function checkThreshold(c: ThresholdCondition): void {
+    const expected = c.evaluator === 'gt' || c.evaluator === 'lt' ? 1 : 2;
+    if (c.params.length !== expected || c.params.some(p => !Number.isFinite(p))) {
+        throw new ValidationError(`Warunek progu "${c.evaluator}" wymaga ${expected === 1 ? 'jednej liczby' : 'dwóch liczb (od, do)'}`);
+    }
+}
+
+/** Wyrażenie "Threshold" Grafany na serii: 1 gdy warunek spełniony, 0 gdy nie - dla każdego punktu */
+export function applyThreshold(series: readonly TimeSeries[], c: ThresholdCondition): TimeSeries[] {
+    const [a, b] = c.params;
+    const test = (v: number) => c.evaluator === 'gt' ? v > a
+        : c.evaluator === 'lt' ? v < a
+        : c.evaluator === 'within_range' ? v > Math.min(a, b) && v < Math.max(a, b)
+        : v < Math.min(a, b) || v > Math.max(a, b);
+    return series.map(ts => new TimeSeries('threshold', ts.tags, ts.points.map(p => ({ timestamp: p.timestamp, value: test(p.value) ? 1 : 0 }))));
+}

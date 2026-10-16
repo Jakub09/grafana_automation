@@ -1,4 +1,4 @@
-import { AlertNotification, RuleGroup } from '../../domain/alerting/alert-notification';
+import { AlertInstance, AlertNotification, RuleGroup } from '../../domain/alerting/alert-notification';
 import { AlertRuleRepository } from '../../domain/alerting/alert-rule.repository';
 import { DashboardRepository } from '../../domain/dashboard/dashboard.repository';
 import { createEmailMessage, InlineImage } from '../../domain/notification/email-message';
@@ -59,7 +59,12 @@ export class AlertNotificationHandler {
     public async handle(notification: AlertNotification, taskId: string, progress: DeliveryProgress = {}): Promise<AlertNotificationResult> {
         const sections: Section[] = [];
         for (const group of notification.byRule()) {
-            sections.push(await this.buildSection(group, notification));
+            const rule = await this.alertRules.findByUid(group.ruleUid);
+            if (rule?.panelLabel && rule.panelId === undefined) {
+                sections.push(...await this.dashboardRuleSections(group, rule, notification));
+            } else {
+                sections.push(await this.buildSection(group, notification, rule));
+            }
         }
 
         // Reguły z różnymi odbiorcami trafiają do osobnych maili
@@ -100,16 +105,44 @@ export class AlertNotificationHandler {
         return result;
     }
 
-    private async buildSection(group: RuleGroup, notification: AlertNotification): Promise<Section> {
+    /**
+     * Reguła wielowymiarowa dashboardu: instancje dzielone wg etykiety panelu (np. SGN) - sekcja i wykres na panel.
+     * Instancje bez pasującego panelu (np. alert techniczny "brak danych") - wspólna sekcja bez wykresu.
+     */
+    private async dashboardRuleSections(group: RuleGroup, rule: AlertRule, notification: AlertNotification): Promise<Section[]> {
+        const dashboard = rule.dashboardUid ? await this.dashboards.findByUid(rule.dashboardUid) : null;
+        const severity = rule.title.match(/^\[[^\]]+\]/)?.[0];
+        const byPanel = new Map<string, AlertInstance[]>();
+        for (const instance of group.instances) {
+            const panelTitle = rule.panelTitleFor(instance.dimensions) ?? '';
+            byPanel.set(panelTitle, [...(byPanel.get(panelTitle) ?? []), instance]);
+        }
+        const sections: Section[] = [];
+        for (const [panelTitle, instances] of byPanel) {
+            const panel = panelTitle ? dashboard?.findPanelByTitle(panelTitle) : undefined;
+            sections.push(await this.buildSection({ ruleUid: group.ruleUid, instances }, notification, rule, {
+                panelId: panel?.id ?? null,
+                title: panel ? [severity, panel.title].filter(Boolean).join(' ') : rule.title,
+                noPanelNote: panelTitle
+                    ? `Brak panelu „${panelTitle}” na dashboardzie - brak wykresu.`
+                    : `Alert bez etykiety ${rule.panelLabel} - nie wskazuje panelu, brak wykresu.`,
+            }));
+        }
+        return sections;
+    }
+
+    private async buildSection(
+        group: RuleGroup, notification: AlertNotification, rule: AlertRule | null,
+        override?: { panelId: number | null; title: string; noPanelNote: string },
+    ): Promise<Section> {
         const first = group.instances[0];
-        const rule = await this.alertRules.findByUid(group.ruleUid);
         const dashboardUid = rule?.dashboardUid ?? first.dashboardUid;
-        const panelId = rule?.panelId ?? first.panelId;
+        const panelId = override ? override.panelId : rule?.panelId ?? first.panelId;
         const grafanaUrl = notification.externalUrl?.replace(/\/+$/, '');
 
         const section: Section = {
             ruleUid: group.ruleUid,
-            title: rule?.title ?? first.ruleTitle,
+            title: override?.title ?? rule?.title ?? first.ruleTitle,
             instances: group.instances,
             valueRefId: rule?.valueRefId,
             recipients: await this.recipients.resolve(dashboardUid ?? null, panelId ?? null),
@@ -131,7 +164,7 @@ export class AlertNotificationHandler {
         });
         if (!dashboardUid || panelId == null) {
             logger.warn(`Alert "${section.title}": brak powiązania z panelem - mail bez wykresu`, { ruleUid: group.ruleUid });
-            section.chartNote = 'Reguła nie jest powiązana z panelem dashboardu - brak wykresu.';
+            section.chartNote = override?.noPanelNote ?? 'Reguła nie jest powiązana z panelem dashboardu - brak wykresu.';
             return section;
         }
 

@@ -4,9 +4,13 @@ import { GrafanaAlertQuery, GrafanaAlertRuleJson } from './grafana-api.types';
 const EXPR = { type: '__expr__', uid: '__expr__', name: 'Expression' };
 const INACTIVE_ANNOTATION = 'automation_inactive_since';
 const CHART_ANNOTATION = 'automation_show_on_chart';
+const PANEL_LABEL_ANNOTATION = 'automation_panel_label';
+const PANEL_TITLE_ANNOTATION = 'automation_panel_title';
+// Grafana przyjmuje __dashboardUid__ tylko razem z __panelId__ - reguła dashboardu ma własną adnotację
+const DASHBOARD_ANNOTATION = 'automation_dashboard_uid';
 
-const withoutKey = (record: Record<string, string>, key: string | null) => {
-    if (key) delete record[key];
+const withoutKeys = (record: Record<string, string>, keys: (string | null)[]) => {
+    for (const key of keys) if (key) delete record[key];
     return record;
 };
 
@@ -105,6 +109,11 @@ export function alertRuleToGrafana(rule: AlertRule): GrafanaAlertRuleJson {
     }
     if (p.summary) annotations.summary = p.summary;
     if (p.showOnChart === false) annotations[CHART_ANNOTATION] = 'false';
+    if (p.panelLabel && p.panelTitlePattern) {
+        annotations[PANEL_LABEL_ANNOTATION] = p.panelLabel;
+        annotations[PANEL_TITLE_ANNOTATION] = p.panelTitlePattern;
+        if (p.dashboardUid && p.panelId === undefined) annotations[DASHBOARD_ANNOTATION] = p.dashboardUid;
+    }
 
     const original = p.passthrough as GrafanaAlertRuleJson | undefined;
     return {
@@ -117,7 +126,12 @@ export function alertRuleToGrafana(rule: AlertRule): GrafanaAlertRuleJson {
         noDataState: p.noDataState,
         execErrState: p.execErrState,
         for: p.pendingPeriod,
-        annotations: withInactivity(withoutKey({ ...original?.annotations, ...annotations }, p.showOnChart === false ? null : CHART_ANNOTATION), p.inactiveSince),
+        annotations: withInactivity(withoutKeys({ ...original?.annotations, ...annotations }, [
+            p.showOnChart === false ? null : CHART_ANNOTATION,
+            ...(p.panelLabel ? [] : [PANEL_LABEL_ANNOTATION, PANEL_TITLE_ANNOTATION, DASHBOARD_ANNOTATION]),
+            // reguła dashboardu nie może mieć __dashboardUid__ bez __panelId__ (np. po przejściu z reguły panelu)
+            ...(p.panelId === undefined ? ['__dashboardUid__', '__panelId__'] : []),
+        ]), p.inactiveSince),
         labels: { ...p.labels },
         isPaused: p.isPaused,
         ...(p.receiver ? {
@@ -192,7 +206,7 @@ export function alertRuleToDomain(raw: GrafanaAlertRuleJson): AlertRule {
             threshold: evaluator?.params[0] ?? NaN,
         },
         pendingPeriod: raw.for ?? '0s',
-        dashboardUid: raw.annotations?.__dashboardUid__,
+        dashboardUid: raw.annotations?.__dashboardUid__ ?? raw.annotations?.[DASHBOARD_ANNOTATION],
         panelId: Number.isFinite(panelId) ? panelId : undefined,
         labels: { ...raw.labels },
         summary: raw.annotations?.summary,
@@ -204,6 +218,10 @@ export function alertRuleToDomain(raw: GrafanaAlertRuleJson): AlertRule {
         managed,
         inactiveSince: raw.annotations?.[INACTIVE_ANNOTATION],
         showOnChart: raw.annotations?.[CHART_ANNOTATION] !== 'false',
+        ...(raw.annotations?.[PANEL_LABEL_ANNOTATION] && raw.annotations?.[PANEL_TITLE_ANNOTATION] ? {
+            panelLabel: raw.annotations[PANEL_LABEL_ANNOTATION],
+            panelTitlePattern: raw.annotations[PANEL_TITLE_ANNOTATION],
+        } : {}),
         valueRefId: managed ? reduceNode!.refId : undefined,
         passthrough: raw,
     });

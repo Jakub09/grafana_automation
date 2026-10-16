@@ -38,7 +38,12 @@ export const updateDashboardSchema = z.object({
 const panelQuerySchema = z.object({
     refId: z.string().min(1).optional(),
     query: z.string().min(1).describe('InfluxQL albo, przy type "math", wyrażenie Grafany, np. "$A / $B"'),
-    type: z.literal('math').optional().describe('math - wyrażenie Grafany (Server Side Expression) liczone z innych zapytań'),
+    type: z.enum(['math', 'threshold']).optional()
+        .describe('math - wyrażenie z innych zapytań ("query": "$A / $B"); threshold - 1/0 wg warunku ("query": refId wejścia, np. "B")'),
+    condition: z.object({
+        evaluator: z.enum(['gt', 'lt', 'within_range', 'outside_range']),
+        params: z.array(z.number()).min(1).max(2),
+    }).strict().optional().describe('Warunek wyrażenia threshold, np. { "evaluator": "gt", "params": [90] }'),
     alias: z.string().optional(),
     color: z.string().optional(),
     dashed: z.boolean().optional(),

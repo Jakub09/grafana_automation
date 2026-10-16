@@ -36,7 +36,7 @@
   "summaryPanel": {
     "title": "{dashboard} - zajętość SG [%]",
     "filter": {
-      "MTYPE": "USED.Per"
+      "MTYPE": "USED.PER"
     },
     "unit": "percent",
     "axisLabel": "Zajętość",
@@ -58,19 +58,29 @@
     {
       "refId": "A",
       "alias": "USED.GB",
-      "query": "SELECT mean(\"VAL\") FROM \"MF.STG.SPACE\" WHERE {where} AND \"MTYPE\" = 'USED.GB' AND $timeFilter GROUP BY time($__interval) fill(null)"
+      "query": "SELECT mean(\"VAL\") FROM \"MF.STG.SPACE\" WHERE \"LPAR\" = '{dashboard}' AND \"SGN\" = '{panel}' AND \"MTYPE\" = 'USED.GB' AND $timeFilter GROUP BY time($__interval) fill(null)"
     },
     {
       "refId": "B",
-      "alias": "TOTAL.GB",
-      "query": "SELECT mean(\"VAL\") FROM \"MF.STG.SPACE\" WHERE {where} AND \"MTYPE\" = 'TOTAL.GB' AND $timeFilter GROUP BY time($__interval) fill(null)"
+      "alias": "USED.PER",
+      "query": "SELECT mean(\"VAL\") FROM \"MF.STG.SPACE\" WHERE \"LPAR\" = '{dashboard}' AND \"SGN\" = '{panel}' AND \"MTYPE\" = 'USED.PER' AND $timeFilter GROUP BY time($__interval) fill(null)",
+      "unit": "percent"
     },
     {
       "refId": "C",
-      "alias": "Zajętość",
-      "expression": "$A / $B",
-      "unit": "percentunit",
-      "color": "purple"
+      "alias": "TOTAL.GB",
+      "query": "SELECT mean(\"VAL\") FROM \"MF.STG.SPACE\" WHERE \"LPAR\" = '{dashboard}' AND \"SGN\" = '{panel}' AND \"MTYPE\" = 'TOTAL.GB' AND $timeFilter GROUP BY time($__interval) fill(null)"
+    },
+    {
+      "refId": "D",
+      "alias": "Powyżej 90%",
+      "threshold": {
+        "input": "B",
+        "evaluator": "gt",
+        "value": 90
+      },
+      "unit": "bool",
+      "color": "red"
     }
   ],
   "extraQueries": [
@@ -81,31 +91,20 @@
       "dashed": true
     }
   ],
+  "queries": {
+    "alert": "SELECT mean(\"VAL\") FROM \"MF.STG.SPACE\" WHERE \"LPAR\" = '{dashboard}' AND \"MTYPE\" = 'USED.PER' AND $timeFilter GROUP BY time({interval}), \"SGN\" fill(none)"
+  },
   "alert": {
-    "threshold": 0.9,
+    "threshold": 90,
     "evaluator": "gt",
     "reducer": "last",
     "pendingPeriod": "15m",
-    "lookbackSeconds": 3600,
+    "lookbackSeconds": 1800,
     "interval": "5m",
-    "ruleGroup": "mf-storage",
+    "ruleGroup": "mf-storage-{dashboard}",
     "severity": "warning",
     "showOnChart": false,
-    "evaluationInterval": "1m",
-    "queries": [
-      {
-        "refId": "A",
-        "query": "SELECT mean(\"VAL\") FROM \"MF.STG.SPACE\" WHERE \"LPAR\" = '{dashboard}' AND \"SGN\" = '{panel}' AND \"MTYPE\" = 'USED.GB' AND $timeFilter GROUP BY time({interval}) fill(none)"
-      },
-      {
-        "refId": "B",
-        "query": "SELECT mean(\"VAL\") FROM \"MF.STG.SPACE\" WHERE \"LPAR\" = '{dashboard}' AND \"SGN\" = '{panel}' AND \"MTYPE\" = 'TOTAL.GB' AND $timeFilter GROUP BY time({interval}) fill(none)"
-      },
-      {
-        "refId": "C",
-        "expression": "$A / $B"
-      }
-    ],
-    "conditionRefId": "C"
+    "evaluationInterval": "5m",
+    "scope": "dashboard"
   }
 }

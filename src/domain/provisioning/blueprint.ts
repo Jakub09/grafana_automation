@@ -1,7 +1,7 @@
 import { GridLayout } from '../dashboard/grid-layout';
 import { ValidationError } from '../../shared/errors';
 import { AlertNode, AlertPolicy } from '../alerting/alert-rule';
-import { MathExpression } from '../metrics/expression';
+import { checkThreshold, MathExpression, ThresholdCondition } from '../metrics/expression';
 import { parseDurationMs } from '../shared/time-range';
 import { quoteIdentifier, quoteString } from '../metrics/influxql';
 import { SchemaGrouping } from '../metrics/schema-tree';
@@ -16,6 +16,11 @@ export interface BlueprintAlert extends AlertPolicy {
     conditionRefId?: string;
     /** Interwał ewaluacji grupy reguł (np. "1m"); w Grafanie dotyczy całej grupy (folder + ruleGroup) */
     evaluationInterval?: string;
+    /**
+     * panel - reguła na każdy panel (domyślnie); dashboard - jedna reguła wielowymiarowa na dashboard
+     * (zapytanie z GROUP BY tagu panelu, instancja alertu na panel) - wielokrotnie mniej zapytań do bazy
+     */
+    scope?: 'panel' | 'dashboard';
     /** Rysuj próg i moment przekroczenia na wykresie w mailu; domyślnie tak, chyba że alert ma własne zapytanie */
     showOnChart?: boolean;
 }
@@ -65,9 +70,10 @@ export interface ExtraQuery {
     /** Wymagany w panelQueries (wyrażenia odwołują się do niego: $A); w extraQueries - kolejna wolna litera */
     refId?: string;
     alias?: string;
-    /** InfluxQL (szablon ze znacznikami) albo, przy type "math", wyrażenie Grafany, np. "$A / $B" */
+    /** InfluxQL (szablon ze znacznikami); przy type "math" - wyrażenie, np. "$A / $B"; przy "threshold" - refId wejścia */
     query: string;
-    type?: 'math';
+    type?: 'math' | 'threshold';
+    condition?: ThresholdCondition;
     color?: string;
     dashed?: boolean;
     /** Jednostka serii, gdy inna niż panelu - prawa oś Y */
@@ -167,7 +173,7 @@ export class Blueprint {
     }
 
     /** Unikalne refId i wyrażenia odwołujące się do istniejących zapytań */
-    private static checkExpressions(where: string, queries: readonly { refId?: string; query: string; type?: 'math' }[]): void {
+    private static checkExpressions(where: string, queries: readonly { refId?: string; query: string; type?: 'math' | 'threshold'; condition?: ThresholdCondition }[]): void {
         const refs = new Set<string>();
         for (const q of queries) {
             if (q.refId && refs.has(q.refId)) throw new ValidationError(`${where}: zduplikowany refId ${q.refId}`);
@@ -177,6 +183,10 @@ export class Blueprint {
             for (const ref of new MathExpression(q.query).refs) {
                 if (!refs.has(ref)) throw new ValidationError(`${where}: wyrażenie "${q.query}" odwołuje się do nieistniejącego ${ref}`);
             }
+        }
+        for (const q of queries.filter(x => x.type === 'threshold')) {
+            if (!refs.has(q.query)) throw new ValidationError(`${where}: próg ${q.refId ?? ''} - wejście "${q.query}" nie istnieje`);
+            if (q.condition) checkThreshold(q.condition);
         }
     }
 
@@ -228,11 +238,11 @@ export class Blueprint {
         return this.title(this.props.seriesAlias, dashboard, panel, series);
     }
 
-    private where(dashboard: string, panel: string, series?: string): string {
+    private where(dashboard: string, panel: string | null, series?: string): string {
         const { dashboardTag, panelTag, seriesTag } = this.props.grouping;
         const conditions: string[] = [];
         if (dashboardTag) conditions.push(`${quoteIdentifier(dashboardTag)} = ${quoteString(dashboard)}`);
-        conditions.push(`${quoteIdentifier(panelTag)} = ${quoteString(panel)}`);
+        if (panel !== null) conditions.push(`${quoteIdentifier(panelTag)} = ${quoteString(panel)}`);
         if (seriesTag && series) conditions.push(`${quoteIdentifier(seriesTag)} = ${quoteString(series)}`);
         conditions.push(...this.filterConditions());
         return conditions.join(' AND ');
@@ -246,6 +256,16 @@ export class Blueprint {
                 ...(f.include?.length ? [`${quoteIdentifier(tag)} =~ ${influxRegex(f.include)}`] : []),
                 ...(f.exclude?.length ? [`${quoteIdentifier(tag)} !~ ${influxRegex(f.exclude)}`] : []),
             ]);
+    }
+
+    /**
+     * Grupa reguł dashboardu: alert.ruleGroup z podstawionym {dashboard} / {measurement}, np. "mf-storage-{dashboard}".
+     * Grafana rozkłada ewaluację GRUP w czasie (reguły jednej grupy liczą się jednocześnie), więc grupa na dashboard
+     * rozkłada obciążenie bazy przy setkach reguł.
+     */
+    public ruleGroupFor(dashboard: string): string | undefined {
+        const pattern = this.props.alert?.ruleGroup;
+        return pattern && this.fill(pattern, { dashboard, measurement: this.props.measurement }).replace(/[^\w .:-]+/g, '_');
     }
 
     /** Interwał ewaluacji grupy reguł w sekundach (undefined - bez zmian w Grafanie) */
@@ -298,11 +318,12 @@ export class Blueprint {
     }
 
     /** Własne węzły reguły alertu (z podstawionymi znacznikami) albo undefined */
-    public alertNodesFor(dashboard: string, panel: string): AlertNode[] | undefined {
+    /** @param panel null - reguła dashboardu ({where} bez warunku panelu, {panel} pusty) */
+    public alertNodesFor(dashboard: string, panel: string | null): AlertNode[] | undefined {
         const nodes = this.props.alert?.queries;
         if (!nodes?.length) return undefined;
         const where = this.where(dashboard, panel);
-        const vars = this.templateVars(dashboard, panel, undefined, this.props.alert?.field ?? this.props.fields[0], where, this.props.alert?.interval ?? '5m');
+        const vars = this.templateVars(dashboard, panel ?? '', undefined, this.props.alert?.field ?? this.props.fields[0], where, this.props.alert?.interval ?? '5m');
         return nodes.map(n => ({ ...n, query: n.type === 'math' ? n.query : this.fill(n.query, vars) }));
     }
 
@@ -311,7 +332,7 @@ export class Blueprint {
         return queries.map(q => ({
             ...q,
             ...(q.alias ? { alias: this.title(q.alias, dashboard, panel) } : {}),
-            query: q.type === 'math' ? q.query : this.fill(q.query, vars),
+            query: q.type ? q.query : this.fill(q.query, vars),
         }));
     }
 
@@ -330,6 +351,33 @@ export class Blueprint {
      * Zapytanie alertu: wielowymiarowe przy serii z tagu (osobna instancja na wartość tagu).
      * fill(none) - puste kubełki po ostatnim pomiarze nie mogą trafić do reduktora "last" jako null.
      */
+    public get alertScope(): 'panel' | 'dashboard' {
+        return this.props.alert?.scope ?? 'panel';
+    }
+
+    /**
+     * Zapytanie reguły wielowymiarowej dashboardu: warunki dashboardu i filtrów, GROUP BY tagu panelu
+     * (i serii) - osobna instancja alertu na każdy panel. Własne: queries.alert ({where} bez panelu, {panel} pusty).
+     */
+    public dashboardAlertQuery(dashboard: string): string {
+        const alert = this.props.alert;
+        const interval = alert?.interval ?? '5m';
+        const field = alert?.field ?? this.props.fields[0];
+        const where = this.where(dashboard, null);
+        if (this.props.queries.alert) {
+            return this.fill(this.props.queries.alert, this.templateVars(dashboard, '', undefined, field, where, interval));
+        }
+        const { panelTag, seriesTag } = this.props.grouping;
+        const tags = [panelTag, ...(seriesTag ? [seriesTag] : [])].map(quoteIdentifier).join(', ');
+        return `SELECT ${this.props.aggregation}(${quoteIdentifier(field)}) FROM ${quoteIdentifier(this.props.measurement)} `
+            + `WHERE ${where} AND $timeFilter GROUP BY time(${interval}), ${tags} fill(none)`;
+    }
+
+    /** Wzorzec tytułu panelu dashboardu z {panel} do podstawienia wartością etykiety instancji, np. "LPAR1 / {panel}" */
+    public panelTitlePatternFor(dashboard: string): string {
+        return this.fill(this.props.panelTitle, { measurement: this.props.measurement, dashboard });
+    }
+
     public alertQuery(dashboard: string, panel: string): string {
         const alert = this.props.alert;
         const interval = alert?.interval ?? '5m';

@@ -193,10 +193,10 @@ export class ProvisioningService {
     public async remove(name: string, options: { dryRun?: boolean } = {}): Promise<ProvisioningResult[]> {
         const { blueprint, folderUid, plan } = await this.load(name);
         const dryRun = Boolean(options.dryRun);
-        const ruleGroup = blueprint.alert?.ruleGroup;
         const results: ProvisioningResult[] = [];
 
         for (const planned of plan) {
+            const ruleGroup = blueprint.ruleGroupFor(planned.name);
             const uid = Dashboard.uidFor(folderUid, planned.title);
             const { result, record } = this.resultFor(planned, uid, dryRun);
             const existing = await this.dashboards.findByUid(uid);
@@ -246,18 +246,29 @@ export class ProvisioningService {
             folderUid, datasourceUid, now: new Date(),
             dryRun: Boolean(options.dryRun), update: Boolean(options.update), prune: Boolean(options.prune),
         };
-        // interwał grupy przed zmianami (null - grupa jeszcze nie istnieje i powstanie z pierwszą regułą)
+        // grupy reguł (jedna albo - przy "{dashboard}" we wzorcu - na dashboard) i ich interwały przed zmianami
+        // (null - grupa jeszcze nie istnieje i powstanie z pierwszą regułą)
         const interval = blueprint.evaluationIntervalSeconds;
-        const ruleGroup = blueprint.alert?.ruleGroup;
-        const intervalBefore = interval && ruleGroup ? await this.alertRules.getGroupInterval(folderUid, ruleGroup) : null;
+        const groups = new Map<string, string[]>(); // grupa -> dashboardy
+        for (const planned of plan) {
+            const group = blueprint.ruleGroupFor(planned.name);
+            if (group) groups.set(group, [...(groups.get(group) ?? []), planned.title]);
+        }
+        const before = new Map<string, number | null>();
+        if (interval) {
+            for (const group of groups.keys()) before.set(group, await this.alertRules.getGroupInterval(folderUid, group));
+        }
 
         const results: ProvisioningResult[] = [];
         for (const planned of plan) {
             results.push(await this.applyDashboard(planned, Dashboard.uidFor(folderUid, planned.title), ctx));
         }
-        if (interval && ruleGroup) {
-            const group = await this.syncGroupInterval(folderUid, ruleGroup, interval, intervalBefore, results, ctx);
-            if (group) results.push(group);
+        if (interval) {
+            for (const [group, titles] of groups) {
+                const groupResults = results.filter(r => titles.includes(r.title));
+                const result = await this.syncGroupInterval(folderUid, group, interval, before.get(group) ?? null, groupResults, ctx);
+                if (result) results.push(result);
+            }
         }
         return results;
     }
@@ -269,7 +280,9 @@ export class ProvisioningService {
     private async syncGroupInterval(
         folderUid: string, ruleGroup: string, seconds: number, before: number | null, results: ProvisioningResult[], ctx: ApplyContext,
     ): Promise<ProvisioningResult | null> {
-        const created = results.some(r => r.alertRulesCreated > 0);
+        // nowa grupa powstaje z utworzoną albo przeniesioną do niej regułą
+        const created = results.some(r => r.actions.some(a => !a.skipped && (a.type === 'create-rule'
+            || (a.type === 'update-rule' && a.changes?.some(c => c.field === 'ruleGroup' && c.after === ruleGroup)))));
         if (before === seconds || (before === null && !created)) return null;
         const title = `Grupa reguł ${ruleGroup}`;
         const { result, record } = this.resultFor({ name: ruleGroup, title, tags: [], panels: [], active: true }, `${folderUid}/${ruleGroup}`, ctx.dryRun);
@@ -462,7 +475,9 @@ export class ProvisioningService {
             if (!plannedPanel.alert) continue;
 
             const desired = this.ruleFor(saved, panel, plannedPanel.alert, ctx);
-            const own = panelRules.filter(r => r.managed && r.toProps().ruleGroup === desired.toProps().ruleGroup);
+            // reguła blueprintu: ta sama grupa albo - po zmianie alert.ruleGroup - ten sam tytuł (wtedy --update ją przeniesie)
+            const sameGroup = panelRules.filter(r => r.managed && r.toProps().ruleGroup === desired.toProps().ruleGroup);
+            const own = sameGroup.length ? sameGroup : panelRules.filter(r => r.managed && r.title === desired.title);
             if (own.length === 0) {
                 if (plannedPanel.active && record({
                     type: 'create-rule',
@@ -484,6 +499,17 @@ export class ProvisioningService {
                 }
             }
         }
+        // 4. Reguła wielowymiarowa dashboardu (alert.scope = "dashboard"); po powrocie do reguł paneli - usuwana z --update
+        if (planned.alert) {
+            await this.syncDashboardRule(planned, saved, rules, Boolean(existing), ctx, record, dirty);
+        } else {
+            for (const rule of rules.filter(r => r.managed && r.panelId === undefined && r.panelLabel)) {
+                if (record({ type: 'delete-rule', target: rule.title, details: 'zastąpiona regułami paneli', skipped: ctx.update ? undefined : NEEDS_UPDATE })) {
+                    if (!ctx.dryRun) await this.alertRules.delete(rule.uid!);
+                }
+            }
+        }
+
         if (!ctx.dryRun) {
             for (const rule of dirty) await this.alertRules.update(rule);
         }
@@ -535,6 +561,64 @@ export class ProvisioningService {
         if (!apply) return false;
         for (const { panel, to } of moves) dashboard.updatePanel(panel.id, { gridPos: to });
         return true;
+    }
+
+    /**
+     * Reguła dashboardu: utworzenie, zmiany blueprintu (--update), pauza przy dashboardzie bez danych.
+     * Przejście z reguł paneli: stare reguły paneli są usuwane, a reguła dashboardu tworzona - razem, z --update.
+     */
+    private async syncDashboardRule(
+        planned: PlannedDashboard, dashboard: Dashboard, rules: AlertRule[], existing: boolean, ctx: ApplyContext,
+        record: (action: PlanAction) => boolean, dirty: Set<AlertRule>,
+    ): Promise<void> {
+        const alert = planned.alert!;
+        const desired = AlertRule.forDashboard(dashboard, alert.policy, {
+            folderUid: ctx.folderUid,
+            datasourceUid: ctx.datasourceUid,
+            query: alert.query,
+            nodes: alert.nodes,
+            conditionRefId: alert.conditionRefId,
+            title: alert.title,
+            summary: alert.summary,
+            showOnChart: alert.showOnChart,
+            panelLabel: alert.panelLabel,
+            panelTitlePattern: alert.panelTitlePattern,
+        });
+        const dashboardRules = rules.filter(r => r.managed && r.panelId === undefined);
+        const sameGroup = dashboardRules.filter(r => r.toProps().ruleGroup === desired.toProps().ruleGroup);
+        const own = sameGroup.length ? sameGroup : dashboardRules.filter(r => r.title === desired.title);
+        const legacy = rules.filter(r => r.managed && r.panelId !== undefined && alert.panelRuleTitles.includes(r.title));
+        const migration = legacy.length > 0;
+
+        if (own.length === 0 && planned.active) {
+            if (record({
+                type: 'create-rule',
+                target: desired.title,
+                details: `reguła wielowymiarowa: instancja na każdy ${alert.panelLabel}`,
+                skipped: existing && migration && !ctx.update ? NEEDS_UPDATE : undefined,
+            })) {
+                if (!ctx.dryRun) await this.alertRules.create(desired);
+            }
+        }
+        // stare reguły paneli usuwane dopiero po utworzeniu reguły dashboardu (błąd tworzenia ich nie usunie)
+        for (const rule of legacy) {
+            if (record({ type: 'delete-rule', target: rule.title, details: 'zastąpiona regułą dashboardu', skipped: ctx.update ? undefined : NEEDS_UPDATE })) {
+                if (!ctx.dryRun) await this.alertRules.delete(rule.uid!);
+            }
+        }
+
+        if (own.length === 0) return;
+        for (const rule of own) {
+            if (!planned.active && rule.markInactive(ctx.now) && record({ type: 'pause-rule', target: rule.title })) dirty.add(rule);
+            if (planned.active && rule.reactivate() && record({ type: 'resume-rule', target: rule.title })) dirty.add(rule);
+            const diff = diffRule(rule.toProps(), desired.toProps());
+            if (diff.changes.length && record({
+                type: 'update-rule', target: rule.title, changes: diff.changes, skipped: ctx.update ? undefined : NEEDS_UPDATE,
+            })) {
+                rule.update(diff.update);
+                dirty.add(rule);
+            }
+        }
     }
 
     /** Zmiany istniejącego panelu: zapytania i jednostki (--update), serie nieaktywne (--prune) */

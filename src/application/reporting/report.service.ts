@@ -383,8 +383,9 @@ export class ReportService {
                             // refId unikalne w obrębie wykresu (P0_A, P1_A...) - wyrażenia każdego panelu liczone z jego zapytań
                             series: panels.flatMap((p, i) => p.panel.queries.map(q => ({
                                 refId: `P${i}_${q.refId}`,
-                                query: q.type === 'math' ? q.query.replace(/\$\{?(\w+)\}?/g, `$P${i}_$1`) : q.query,
-                                type: q.type, alias: q.alias, color: q.color, dashed: q.dashed, unit: q.unit, hidden: q.hidden,
+                                query: q.type === 'math' ? q.query.replace(/\$\{?(\w+)\}?/g, `$P${i}_$1`)
+                                    : q.type === 'threshold' ? `P${i}_${q.query}` : q.query,
+                                type: q.type, condition: q.condition, alias: q.alias, color: q.color, dashed: q.dashed, unit: q.unit, hidden: q.hidden,
                             }))),
                         }, database));
                     }
@@ -410,7 +411,7 @@ export class ReportService {
             grafanaUnit: panel.unit,
             datasourceUid: panel.datasourceUid,
             series: panel.queries.map(q => ({
-                refId: q.refId, query: q.query, type: q.type, alias: q.alias, color: q.color, dashed: q.dashed, unit: q.unit, hidden: q.hidden,
+                refId: q.refId, query: q.query, type: q.type, condition: q.condition, alias: q.alias, color: q.color, dashed: q.dashed, unit: q.unit, hidden: q.hidden,
             })),
             yMin: panel.min,
             yMax: panel.max,

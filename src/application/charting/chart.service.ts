@@ -6,10 +6,10 @@ import { baseUnitsFromGrafana, formatValue } from '../../domain/charting/units';
 import { Panel } from '../../domain/dashboard/panel';
 import { MetricsRepository } from '../../domain/metrics/metrics.repository';
 import { QueryTemplate } from '../../domain/metrics/query-template';
-import { MathExpression } from '../../domain/metrics/expression';
+import { applyThreshold, MathExpression, ThresholdCondition } from '../../domain/metrics/expression';
 import { computeStats, DataPoint, SeriesStats, TimeSeries } from '../../domain/metrics/time-series';
 import { TimeRange } from '../../domain/shared/time-range';
-import { NoDataError } from '../../shared/errors';
+import { NoDataError, ValidationError } from '../../shared/errors';
 import { elapsedMs, logger } from '../../shared/logger';
 import { metrics } from '../../shared/metrics';
 import { formatDisplayDate } from '../../shared/time-format';
@@ -22,7 +22,9 @@ export interface SeriesSpec {
     refId?: string;
     /** InfluxQL albo, przy type "math", wyrażenie Grafany, np. "$A / $B" */
     query: string;
-    type?: 'math';
+    /** math - wyrażenie z innych zapytań; threshold - 1/0 wg warunku na zapytaniu "query" (refId wejścia) */
+    type?: 'math' | 'threshold';
+    condition?: ThresholdCondition;
     /** Jednostka serii, gdy inna niż wykresu - prawa oś Y */
     unit?: string;
     /** Pobierane / liczone, ale nierysowane (np. składniki wyrażenia) */
@@ -114,7 +116,7 @@ export class ChartService {
             datasourceUid: panel.datasourceUid,
             // także ukryte - mogą być składnikami wyrażeń; rysowane są tylko widoczne
             series: panel.queries.map(q => ({
-                refId: q.refId, query: q.query, type: q.type, alias: q.alias, color: q.color, dashed: q.dashed, unit: q.unit, hidden: q.hidden,
+                refId: q.refId, query: q.query, type: q.type, condition: q.condition, alias: q.alias, color: q.color, dashed: q.dashed, unit: q.unit, hidden: q.hidden,
             })),
             yMin: panel.min,
             yMax: panel.max,
@@ -138,15 +140,21 @@ export class ChartService {
     ): Promise<LabeledSeries[]> {
         // 1. Zapytania InfluxDB; 2. wyrażenia "math" liczone z ich wyników (kolejno - mogą korzystać z wcześniejszych)
         const results = new Array<TimeSeries[]>(spec.series.length);
-        const influx = spec.series.map((s, i) => ({ s, i })).filter(({ s }) => s.type !== 'math');
+        const influx = spec.series.map((s, i) => ({ s, i })).filter(({ s }) => !s.type);
         await mapLimit(influx, QUERY_CONCURRENCY, async ({ s, i }) => {
             results[i] = await this.metrics.query(new QueryTemplate(s.query).render(range, spec.interval), database);
         });
         const byRef = new Map<string, TimeSeries[]>();
         spec.series.forEach((s, i) => { if (s.refId && results[i]) byRef.set(s.refId, results[i]); });
         spec.series.forEach((s, i) => {
-            if (s.type !== 'math') return;
-            results[i] = new MathExpression(s.query).apply(byRef);
+            if (!s.type) return;
+            if (s.type === 'math') {
+                results[i] = new MathExpression(s.query).apply(byRef);
+            } else {
+                const input = byRef.get(s.query);
+                if (!input) throw new ValidationError(`Próg ${s.refId ?? ''}: brak zapytania wejściowego ${s.query}`);
+                results[i] = applyThreshold(input, s.condition!);
+            }
             if (s.refId) byRef.set(s.refId, results[i]);
         });
 
@@ -156,7 +164,7 @@ export class ChartService {
             const s = spec.series[i];
             if (s.hidden) return;
             const multi = seriesList.length > 1;
-            const alias = s.alias ?? (s.type === 'math' ? s.refId : undefined);
+            const alias = s.alias ?? (s.type ? s.refId : undefined);
             const aliasHasTags = /\$tag_|\[\[tag_/.test(alias ?? '');
 
             for (const ts of seriesList) {

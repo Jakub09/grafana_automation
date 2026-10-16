@@ -85,12 +85,18 @@ export interface AlertRuleProps {
      * przekroczenia w mailu). false np. gdy alert liczy procent, a panel pokazuje GB. Domyślnie true.
      */
     showOnChart?: boolean;
+    /**
+     * Reguła wielowymiarowa dashboardu (bez panelId): etykieta instancji wskazująca panel (np. "SGN")
+     * i wzorzec tytułu panelu, np. "LPAR1 / {panel}" - mail rysuje dla każdej instancji wykres jej panelu.
+     */
+    panelLabel?: string;
+    panelTitlePattern?: string;
     passthrough?: unknown;
 }
 
 export type AlertRuleChanges = Partial<Pick<AlertRuleProps,
     'title' | 'query' | 'nodes' | 'conditionRefId' | 'lookbackSeconds' | 'condition' | 'pendingPeriod' | 'labels' | 'summary'
-    | 'receiver' | 'notification' | 'noDataState' | 'execErrState' | 'ruleGroup' | 'showOnChart'>>;
+    | 'receiver' | 'notification' | 'noDataState' | 'execErrState' | 'ruleGroup' | 'showOnChart' | 'panelLabel' | 'panelTitlePattern'>>;
 
 export interface PanelAlertContext {
     folderUid?: string;
@@ -117,6 +123,42 @@ export class AlertRule {
 
     public static restore(props: AlertRuleProps): AlertRule {
         return new AlertRule({ ...props });
+    }
+
+    /**
+     * Reguła wielowymiarowa całego dashboardu: zapytanie z GROUP BY tagu panelu daje osobną instancję alertu
+     * na każdy panel (np. SG), a etykieta instancji (panelLabel) wskazuje panel do wykresu w mailu.
+     */
+    public static forDashboard(
+        dashboard: Dashboard, policy: AlertPolicy,
+        ctx: Omit<PanelAlertContext, 'refId'> & { query: string; panelLabel: string; panelTitlePattern: string },
+    ): AlertRule {
+        const folderUid = ctx.folderUid ?? dashboard.folderUid;
+        if (!folderUid) throw new ValidationError('Brak folderu dla reguły alertu (GRAFANA_FOLDER_UID)');
+        if (!ctx.datasourceUid) throw new ValidationError('Brak źródła danych dla reguły alertu (INFLUXDB_DATASOURCE_UID)');
+        const severity = (policy.labels.severity ?? 'alert').toUpperCase();
+        return AlertRule.create({
+            title: ctx.title ?? `[${severity}] ${dashboard.title}`,
+            folderUid,
+            ruleGroup: policy.ruleGroup,
+            datasourceUid: ctx.datasourceUid,
+            query: ctx.nodes?.find(n => n.type !== 'math')?.query ?? ctx.query,
+            ...(ctx.nodes?.length ? { nodes: ctx.nodes.map(n => ({ ...n })), conditionRefId: ctx.conditionRefId ?? ctx.nodes[ctx.nodes.length - 1].refId } : {}),
+            lookbackSeconds: policy.lookbackSeconds,
+            condition: { ...policy.condition },
+            pendingPeriod: policy.pendingPeriod,
+            dashboardUid: dashboard.uid,
+            labels: { ...policy.labels },
+            summary: ctx.summary,
+            isPaused: false,
+            receiver: policy.receiver,
+            ...(policy.receiver && policy.notification ? { notification: { ...policy.notification } } : {}),
+            noDataState: 'NoData',
+            execErrState: 'Error',
+            showOnChart: ctx.showOnChart ?? true,
+            panelLabel: ctx.panelLabel,
+            panelTitlePattern: ctx.panelTitlePattern,
+        });
     }
 
     /** Reguła powiązana z panelem dashboardu - powiadomienie pozwoli narysować ten panel */
@@ -197,6 +239,14 @@ export class AlertRule {
     public get managed(): boolean { return this.props.managed; }
     public get inactiveSince(): string | undefined { return this.props.inactiveSince; }
     public get valueRefId(): string | undefined { return this.props.valueRefId; }
+    public get panelLabel(): string | undefined { return this.props.panelLabel; }
+    public get panelTitlePattern(): string | undefined { return this.props.panelTitlePattern; }
+
+    /** Tytuł panelu dla instancji reguły wielowymiarowej (wartość etykiety panelLabel) */
+    public panelTitleFor(dimensions: Record<string, string>): string | null {
+        const value = this.props.panelLabel ? dimensions[this.props.panelLabel] : undefined;
+        return value !== undefined && this.props.panelTitlePattern ? this.props.panelTitlePattern.replace(/{panel}/g, value) : null;
+    }
     /** Warunek do narysowania na wykresie panelu albo null (reguła niezarządzana lub inne jednostki) */
     public get chartCondition(): AlertCondition | null {
         return this.props.managed && this.props.showOnChart !== false && Number.isFinite(this.props.condition.threshold)

@@ -64,6 +64,10 @@ export function diffQueries(current: readonly PanelQuery[], desired: readonly Pa
                 changes.push({ field: `typ "${key}"`, before: q.type ?? 'influxdb', after: target.type ?? 'influxdb' });
                 style.type = target.type;
             }
+            if (target.condition && JSON.stringify(target.condition) !== JSON.stringify(q.condition)) {
+                changes.push({ field: `warunek "${key}"`, before: q.condition ?? null, after: target.condition });
+                style.condition = target.condition;
+            }
             for (const field of ['unit', 'hidden'] as const) {
                 if (target[field] !== undefined && target[field] !== q[field]) {
                     changes.push({ field: `${field === 'unit' ? 'jednostka' : 'ukryta'} "${key}"`, before: q[field] ?? null, after: target[field] });
@@ -137,7 +141,7 @@ export function diffPanel(
 export const SUMMARY_FIELDS = PANEL_FIELDS;
 
 const RULE_FIELDS = [
-    'title', 'query', 'nodes', 'conditionRefId', 'lookbackSeconds', 'pendingPeriod', 'labels', 'summary', 'receiver', 'notification', 'showOnChart',
+    'title', 'ruleGroup', 'query', 'nodes', 'conditionRefId', 'lookbackSeconds', 'pendingPeriod', 'labels', 'summary', 'receiver', 'notification', 'showOnChart', 'panelLabel', 'panelTitlePattern',
 ] as const;
 
 /** Różnice między istniejącą regułą a regułą wyliczoną z blueprintu */

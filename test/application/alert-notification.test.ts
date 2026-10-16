@@ -156,3 +156,23 @@ test('Ponowienie: odbiorcy, którzy dostali e-mail przy wcześniejszej próbie, 
     assert.deepEqual(sent, ['ops@x.pl']);
     assert.deepEqual(result.emails.map(e => [e.to[0], e.alreadySent ?? false]), [['admin@x.pl', true], ['ops@x.pl', false]]);
 });
+
+test('Reguła wielowymiarowa dashboardu: sekcja i wykres na panel wg etykiety SGN, instancja bez panelu - bez wykresu', async () => {
+    const { handler, mail, rules, d1 } = await setup();
+    const dashRule = await rules.create(AlertRule.forDashboard(d1, {
+        condition: { threshold: 90, evaluator: 'gt', reducer: 'last' }, pendingPeriod: '0s', lookbackSeconds: 3600, ruleGroup: 'g', labels: { severity: 'warning' },
+    }, { datasourceUid: 'ds', query: 'SELECT 1 GROUP BY "SGN"', panelLabel: 'SGN', panelTitlePattern: 'LPAR1 / {panel}', showOnChart: false }));
+
+    await handler.handle(toAlertNotification({
+        status: 'firing',
+        alerts: [
+            alert(dashRule.uid!, { alertname: dashRule.title, SGN: 'SG2' }),
+            alert(dashRule.uid!, { alertname: dashRule.title, SGN: 'SG7' }),
+        ],
+    }), 'task-d');
+
+    const html = mail.sent[0].html;
+    assert.match(mail.sent[0].subject, /\[WARNING\] LPAR1 \/ SG2 \(\+1 reguła\)/);
+    assert.equal(mail.sent[0].inlineImages.length, 1); // wykres panelu SG2
+    assert.ok(html.includes('Brak panelu „LPAR1 / SG7”'));
+});

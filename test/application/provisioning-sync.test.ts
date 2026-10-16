@@ -294,3 +294,69 @@ test('Blueprint: evaluationInterval - wielokrotność 10 s, pendingPeriod jego w
     assert.throws(() => new Blueprint({ ...baseProps, alert: { ...baseProps.alert!, pendingPeriod: '5m', evaluationInterval: '2m' } }), /pendingPeriod/);
     assert.equal(new Blueprint({ ...baseProps, alert: { ...baseProps.alert!, pendingPeriod: '10m', evaluationInterval: '2m' } }).evaluationIntervalSeconds, 120);
 });
+
+test('ruleGroup z {dashboard}: grupa reguł na dashboard (rozkład ewaluacji w czasie), --update przenosi istniejące reguły i ustawia interwał nowych grup', async () => {
+    const env = setup(['M,LPAR=L1,SGN=SG1,MYTYPE=1', 'M,LPAR=L1,SGN=SG2,MYTYPE=1', 'M,LPAR=L2,SGN=SG1,MYTYPE=1']);
+    await env.service.apply('storage'); // wszystkie reguły w jednej grupie "storage"
+    assert.deepEqual([...new Set(env.rules.items.map(r => r.toProps().ruleGroup))], ['storage']);
+
+    env.change({ alert: { ...baseProps.alert!, ruleGroup: 'storage-{dashboard}', evaluationInterval: '2m', pendingPeriod: '4m' } });
+    const plan = await env.service.plan('storage');
+    const moves = plan.flatMap(r => r.actions).filter(a => a.type === 'update-rule');
+    assert.deepEqual(moves.map(a => [a.target, a.changes!.find(c => c.field === 'ruleGroup')?.after, a.skipped]), [
+        ['[WARNING] L1 / SG1', 'storage-L1', 'wymaga --update'],
+        ['[WARNING] L1 / SG2', 'storage-L1', 'wymaga --update'],
+        ['[WARNING] L2 / SG1', 'storage-L2', 'wymaga --update'],
+    ]);
+
+    await env.service.apply('storage', { update: true });
+    assert.deepEqual(env.rules.items.map(r => [r.title, r.toProps().ruleGroup]), [
+        ['[WARNING] L1 / SG1', 'storage-L1'], ['[WARNING] L1 / SG2', 'storage-L1'], ['[WARNING] L2 / SG1', 'storage-L2'],
+    ]);
+    assert.equal(env.rules.items.length, 3); // przeniesione, nie zdublowane
+    assert.deepEqual([await env.rules.getGroupInterval('f', 'storage-L1'), await env.rules.getGroupInterval('f', 'storage-L2')], [120, 120]);
+    assert.ok((await env.service.plan('storage', { update: true })).every(r => r.actions.length === 0));
+});
+
+test('alert.scope "dashboard": jedna reguła wielowymiarowa na dashboard (GROUP BY panelu); przejście z reguł paneli z --update', async () => {
+    const keys = ['M,LPAR=L1,SGN=SG1,MYTYPE=1', 'M,LPAR=L1,SGN=SG2,MYTYPE=1', 'M,LPAR=L2,SGN=SG1,MYTYPE=1'];
+    const env = setup(keys);
+    await env.service.apply('storage'); // reguły paneli: 3
+    assert.equal(env.rules.items.length, 3);
+
+    env.change({ alert: { ...baseProps.alert!, scope: 'dashboard' } });
+    const plan = await env.service.plan('storage');
+    assert.deepEqual(plan[0].actions.map(a => [a.type, a.target, a.skipped]), [
+        ['create-rule', '[WARNING] L1 - M', 'wymaga --update'],
+        ['delete-rule', '[WARNING] L1 / SG1', 'wymaga --update'],
+        ['delete-rule', '[WARNING] L1 / SG2', 'wymaga --update'],
+    ]);
+
+    await env.service.apply('storage', { update: true });
+    const rules = env.rules.items.map(r => r.toProps());
+    assert.deepEqual(rules.map(r => [r.title, r.panelId, r.panelLabel, r.panelTitlePattern]), [
+        ['[WARNING] L1 - M', undefined, 'SGN', 'L1 / {panel}'],
+        ['[WARNING] L2 - M', undefined, 'SGN', 'L2 / {panel}'],
+    ]);
+    assert.equal(rules[0].query, 'SELECT mean("VAL") FROM "M" WHERE "LPAR" = \'L1\' AND $timeFilter GROUP BY time(5m), "SGN", "MYTYPE" fill(none)');
+    assert.ok((await env.service.plan('storage', { update: true })).every(r => r.actions.length === 0));
+
+    // dashboard bez danych - pauza reguły dashboardu; nowy dashboard - reguła od razu
+    env.metrics.inactiveKeys.add(keys[2]);
+    keys.push('M,LPAR=L3,SGN=SG1,MYTYPE=1');
+    const result = await env.service.apply('storage');
+    assert.deepEqual(result.flatMap(r => r.actions.filter(a => !a.skipped).map(a => `${a.type} ${a.target}`)),
+        ['pause-rule [WARNING] L2 - M', 'create-dashboard L3 - M', 'add-panel L3 / SG1', 'create-rule [WARNING] L3 - M']);
+});
+
+test('Powrót z alert.scope "dashboard" do reguł paneli: reguła dashboardu usuwana, reguły paneli zakładane (--update)', async () => {
+    const env = setup(['M,LPAR=L1,SGN=SG1,MYTYPE=1', 'M,LPAR=L1,SGN=SG2,MYTYPE=1']);
+    env.change({ alert: { ...baseProps.alert!, scope: 'dashboard' } });
+    await env.service.apply('storage');
+    assert.deepEqual(env.rules.items.map(r => r.title), ['[WARNING] L1 - M']);
+
+    env.change({ alert: { ...baseProps.alert!, scope: 'panel' } });
+    await env.service.apply('storage', { update: true });
+    assert.deepEqual(env.rules.items.map(r => r.title), ['[WARNING] L1 / SG1', '[WARNING] L1 / SG2']);
+    assert.deepEqual((await env.service.plan('storage', { update: true }))[0].actions, []);
+});

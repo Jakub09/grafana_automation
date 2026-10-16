@@ -299,4 +299,5 @@ CLI działa jako osobny proces, więc jego operacje nie trafiają do metryk serw
 Reguły z wyrażeniami: `POST /api/dashboards/:uid/panels/:panelId/alert-rules` przyjmuje `nodes`
 (`[{ "refId": "A", "query": "..." }, { "refId": "C", "query": "$A / $B", "type": "math" }]`) i `conditionRefId`,
 albo `"nodesFromPanel": true`, które bierze zapytania i wyrażenia panelu. Zapytania paneli w API mają pola `type: "math"`
-(wyrażenie w `query`), `unit` (prawa oś) i `hidden`.
+(wyrażenie w `query`) albo `type: "threshold"` (`query` = refId wejścia, `condition: {"evaluator": "gt", "params": [90]}`),
+oraz `unit` (prawa oś) i `hidden`.

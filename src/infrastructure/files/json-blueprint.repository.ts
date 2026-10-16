@@ -5,6 +5,7 @@ import { BlueprintRepository } from '../../domain/provisioning/blueprint.reposit
 import { ConflictError, ValidationError } from '../../shared/errors';
 import { logger } from '../../shared/logger';
 import { parseDurationMs } from '../../domain/shared/time-range';
+import { ThresholdCondition } from '../../domain/metrics/expression';
 import { blueprintFileSchema, parseWithSchema } from './file-schemas';
 
 /** Blueprinty z plików <blueprintsDir>/<name>.json - jeden plik na schemat danych */
@@ -75,8 +76,14 @@ export class JsonBlueprintRepository implements BlueprintRepository {
         }
         const { $schema: _schema, alert, field, fields, connectNulls, panelQueries, extraQueries, ...rest } = parseWithSchema(blueprintFileSchema, json, file);
         // "expression" w pliku -> zapytanie typu math w domenie
-        const toQuery = ({ expression, query, ...q }: { expression?: string; query?: string } & Omit<ExtraQuery, 'query' | 'type'>): ExtraQuery =>
-            (expression ? { ...q, query: expression, type: 'math' } : { ...q, query: query! });
+        type FileQuery = { expression?: string; query?: string; threshold?: { input: string; evaluator: ThresholdCondition['evaluator']; value?: number; range?: [number, number] } }
+            & Omit<ExtraQuery, 'query' | 'type' | 'condition'>;
+        const toQuery = ({ expression, query, threshold, ...q }: FileQuery): ExtraQuery =>
+            threshold ? {
+                ...q, query: threshold.input, type: 'threshold',
+                condition: { evaluator: threshold.evaluator, params: threshold.value !== undefined ? [threshold.value] : [...threshold.range!] },
+            }
+            : expression ? { ...q, query: expression, type: 'math' } : { ...q, query: query! };
 
         return new Blueprint({
             ...rest,
@@ -97,6 +104,7 @@ export class JsonBlueprintRepository implements BlueprintRepository {
                 receiver: alert.receiver,
                 ...(alert.notification ? { notification: alert.notification } : {}),
                 ...(alert.evaluationInterval ? { evaluationInterval: alert.evaluationInterval } : {}),
+                scope: alert.scope,
                 ...(alert.queries ? {
                     queries: alert.queries.map(n => (n.expression
                         ? { refId: n.refId, query: n.expression, type: 'math' as const }

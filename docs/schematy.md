@@ -95,12 +95,13 @@ panel. Zawsze go sprawdź i dodaj sekcję `alert`, jeśli schemat ma mieć alert
 | `pendingPeriod` | `5m` | jak długo warunek musi trwać, zanim alert się odpali |
 | `lookbackSeconds` | `3600` | zakres danych, które ocenia reguła |
 | `interval` | `5m` | agregacja w zapytaniu alertu |
-| `ruleGroup` | – (wymagany) | grupa reguł w Grafanie |
+| `ruleGroup` | – (wymagany) | grupa reguł w Grafanie; wzorce `{dashboard}`, `{measurement}`, np. `"mf-storage-{dashboard}"` daje grupę na każdy LPAR ([dlaczego](#dużo-reguł-alertów-obciążenie-influxdb)) |
 | `severity` | `warning` | etykieta `severity`, widoczna w tytule reguły i mailu (`[WARNING] ...`) |
 | `labels` | `{}` | dodatkowe etykiety (np. do routingu w politykach powiadomień Grafany) |
 | `receiver` | – | **contact point** Grafany, do którego reguły wysyłają powiadomienia (z pominięciem polityki powiadomień); domyślnie decyduje polityka |
 | `notification` | – | ustawienia powiadomień dla `receiver`: `groupBy` (np. `["alertname"]`), `groupWait`, `groupInterval`, `repeatInterval` (np. `"12h"`), `muteTimeIntervals` (nazwy *mute timings*) |
 | `evaluationInterval` | – (Grafana: `1m` dla nowej grupy) | **jak często Grafana sprawdza reguły**, np. `"30s"`, `"1m"`, `"5m"`; wielokrotność 10 s |
+| `scope` | `panel` | `panel` daje regułę na każdy panel; **`dashboard` daje jedną regułę wielowymiarową na dashboard** (instancja alertu na każdy panel, [niżej](#jedna-reguła-wielowymiarowa-na-dashboard-scope-dashboard)) |
 | `queries`, `conditionRefId` | – | **własne węzły reguły**: kilka zapytań i wyrażeń ([niżej](#wyrażenia-i-własne-zapytania-w-regułach-alertów)) |
 | `showOnChart` | tak, chyba że jest `queries.alert` / `alert.queries` | linia progu i moment przekroczenia na wykresie w mailu (wyłącz, gdy alert liczy co innego niż panel) |
 
@@ -122,6 +123,65 @@ co aplikacja sprawdza przy wczytaniu blueprintu. Interwał można też zmienić 
 }
 ```
 
+### Jedna reguła wielowymiarowa na dashboard (`scope: "dashboard"`)
+
+```json
+"queries": {
+  "alert": "SELECT mean(\"VAL\") FROM \"MF.STG.SPACE\" WHERE \"LPAR\" = '{dashboard}' AND \"MTYPE\" = 'USED.PER' AND $timeFilter GROUP BY time({interval}), \"SGN\" fill(none)"
+},
+"alert": { "scope": "dashboard", "threshold": 90, "ruleGroup": "mf-storage-{dashboard}", ... }
+```
+
+Zamiast reguły na każdy panel (np. 316 reguł na wszystkie SG) powstaje **jedna reguła na dashboard (LPAR)**.
+Jej zapytanie ma `GROUP BY` tagu panelu (`SGN`), więc Grafana tworzy osobną **instancję alertu na każdy SG**:
+alert odpala się i rozwiązuje osobno dla każdego SG, a wyciszyć można pojedynczy SG (przycisk *Wycisz* przy
+instancji) albo całą regułę.
+
+- **Zapytanie:** bez własnego `queries.alert` / `alert.queries` aplikacja generuje
+  `SELECT agregacja(pole) ... WHERE <dashboard i filtry> GROUP BY time(interval), "<panelTag>"[, "<seriesTag>"]`.
+  We własnych zapytaniach `{where}` nie zawiera warunku panelu, a `{panel}` jest pusty. `GROUP BY` tagu panelu trzeba
+  wtedy dopisać samemu.
+- **Mail:** instancje są dzielone według etykiety panelu. Każdy SG z alertem dostaje sekcję zatytułowaną jak panel
+  (`[WARNING] LPAR1 / SG2`) i wykres swojego panelu. Panel jest dobierany po tytule (`panelTitle` z
+  `{panel}` = wartość etykiety).
+- **Nieaktywne SG** nie zwracają serii, więc nie dają instancji ani alertów „brak danych”. Dashboard bez danych ma
+  regułę zapauzowaną.
+- **Przejście z reguł paneli:** `provision plan <nazwa> --update` pokazuje utworzenie reguły dashboardu i usunięcie
+  reguł paneli, a `apply --update` je wykonuje. Najpierw tworzy nową regułę, a dopiero potem usuwa stare. Powrót do
+  `"scope": "panel"` działa tak samo w drugą stronę.
+- W Grafanie reguła ma adnotacje `automation_panel_label`, `automation_panel_title` i `automation_dashboard_uid`.
+  Grafana nie przyjmuje `__dashboardUid__` bez `__panelId__`.
+
+### Dużo reguł alertów: obciążenie InfluxDB
+
+Najskuteczniejsze jest **`"scope": "dashboard"`** (wyżej): z setek reguł robi się tyle, ile jest dashboardów, a
+z setek zapytań kilkadziesiąt razy mniej. Pozostałe sposoby uzupełniają to rozwiązanie.
+
+Grafana ewaluuje **wszystkie reguły jednej grupy w tej samej chwili**, a w czasie rozkłada tylko całe grupy.
+Kilkaset reguł w jednej grupie to więc co interwał jeden skok setek zapytań do InfluxDB. Przy regule z
+wyrażeniem `A, B → C` każda reguła wysyła 2 zapytania. Co pomaga, od najprostszego:
+
+1. **Grupa na dashboard**: `"ruleGroup": "mf-storage-{dashboard}"`. Grafana przydziela grupom różne chwile
+   w obrębie interwału, w szczelinach co 10 s: przy `1m` jest 6 szczelin, przy `5m` 30. `provision apply --update`
+   przenosi istniejące reguły do nowych grup i ustawia im `evaluationInterval`. Stare, puste grupy Grafana
+   usuwa sama.
+2. **Dłuższy interwał i krótszy zakres danych**: `"evaluationInterval": "5m"`, `"lookbackSeconds": 1800`.
+   Zajętość storage zmienia się wolno, więc ewaluacja co minutę z godziną danych to wielokrotnie więcej pracy
+   niż potrzeba. `lookbackSeconds` musi obejmować co najmniej kilka punktów danych. `pendingPeriod` musi być
+   wielokrotnością interwału.
+3. **Rozłożenie reguł wewnątrz grupy** (ustawienie Grafany, wymaga restartu). W `grafana.ini`:
+   ```ini
+   [feature_toggles]
+   enable = jitterAlertRulesWithinGroups
+   ```
+   albo zmienna `GF_FEATURE_TOGGLES_ENABLE=jitterAlertRulesWithinGroups`. Każda reguła dostaje wtedy własną chwilę
+   w interwale (sprawdzone na Grafanie 12.3.1).
+4. **Mniej zapytań na regułę**: jeśli w danych jest gotowa seria procentowa (np. `USED.PER`), alert na niej
+   (jedno zapytanie) zamiast `$A / $B` (dwa zapytania) zmniejsza liczbę zapytań o połowę.
+
+Przy 316 regułach, grupach per LPAR, `5m` i fladze z punktu 3 obciążenie rozkłada się na ok. 30 chwil
+w ciągu 5 minut, czyli ok. 10 reguł naraz zamiast 316.
+
 ### Wyrażenia i własne zapytania w panelach (`panelQueries`)
 
 `panelQueries` to lista zapytań każdego panelu, która **zastępuje** serie generowane z `grouping.seriesTag` / pól.
@@ -139,11 +199,28 @@ Każde zapytanie ma `refId` i albo `query` (InfluxQL), albo `expression`, czyli 
 | Klucz | Znaczenie |
 |---|---|
 | `refId` | identyfikator; wyrażenia odwołują się do niego: `$A`, `${A}` |
-| `query` / `expression` | InfluxQL (znaczniki jak w `queries`) **albo** wyrażenie: `+ - * /`, nawiasy, liczby, np. `$A / $B`, `($A - $B) / 1024`, `$A / $B * 100` |
+| `query` / `expression` / `threshold` | InfluxQL (znaczniki jak w `queries`) **albo** wyrażenie *Math*: `+ - * /`, nawiasy, liczby, np. `$A / $B`, `($A - $B) / 1024`, `$A / $B * 100` **albo** wyrażenie *Threshold* (niżej) |
 | `alias` | nazwa serii w legendzie (dla wyrażenia to *display name* w Grafanie) |
 | `unit` | jednostka serii, gdy inna niż panelu: seria idzie na **prawą oś Y** (np. `percentunit` = ułamek 0–1 pokazany jako %) |
 | `hidden` | zapytanie liczone, ale nierysowane, np. składniki wyrażenia |
 | `color`, `dashed` | kolor i linia przerywana |
+
+**Wyrażenie Threshold** odpowiada w Grafanie *Expression → Threshold* („Input B is above 90”). Dla każdego punktu
+daje 1, gdy warunek jest spełniony, i 0, gdy nie:
+
+```json
+{ "refId": "D", "alias": "Powyżej 90%", "threshold": { "input": "B", "evaluator": "gt", "value": 90 }, "unit": "bool" }
+```
+
+| `evaluator` | W Grafanie | Parametr |
+|---|---|---|
+| `gt` | *Is above* | `"value": 90` |
+| `lt` | *Is below* | `"value": 10` |
+| `within_range` | *Is within range* | `"range": [80, 95]` |
+| `outside_range` | *Is outside range* | `"range": [5, 95]` |
+
+`"unit": "bool"` umieszcza serię 0/1 na osobnej osi. Na wykresach w mailach i raportach jest liczona tak samo jak
+w Grafanie i trafia na prawą oś.
 
 Wyrażenia mogą być też w `extraQueries` (np. `{ "alias": "Wolne", "expression": "$B - $A" }`). Wykresy w mailach
 i raportach liczą wyrażenia tak samo jak Grafana (punkt po punkcie, dla wspólnych chwil serii; serie z

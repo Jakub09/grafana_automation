@@ -1,5 +1,6 @@
 import { Dashboard, LayoutItem } from '../../domain/dashboard/dashboard';
 import { Panel, PanelQuery } from '../../domain/dashboard/panel';
+import { ThresholdCondition } from '../../domain/metrics/expression';
 import { GrafanaDashboardResource, GrafanaOverride, GrafanaPanel, GrafanaTarget } from './grafana-api.types';
 import { defaultDashboardSpec, defaultTimeseriesPanel } from './grafana-defaults';
 
@@ -98,17 +99,26 @@ export function panelToDomain(raw: GrafanaPanel): Panel {
         if (typeof unit === 'string') unitByName.set(o.matcher.options, unit);
     }
 
-    const isMath = (t: GrafanaTarget) => (t.datasource as { type?: string } | undefined)?.type === '__expr__' && t.type === 'math';
+    const isExpr = (t: GrafanaTarget, type: string) => (t.datasource as { type?: string } | undefined)?.type === '__expr__' && t.type === type;
+    const isMath = (t: GrafanaTarget) => isExpr(t, 'math');
+    const thresholdOf = (t: GrafanaTarget): ThresholdCondition | undefined => {
+        const evaluator = (t.conditions as { evaluator?: { type?: string; params?: unknown[] } }[] | undefined)?.[0]?.evaluator;
+        return evaluator && ['gt', 'lt', 'within_range', 'outside_range'].includes(evaluator.type ?? '')
+            ? { evaluator: evaluator.type as ThresholdCondition['evaluator'], params: (evaluator.params ?? []).map(Number) }
+            : undefined;
+    };
     const queries: PanelQuery[] = (raw.targets ?? [])
-        .filter(t => (typeof t.query === 'string' && t.query.trim()) || (isMath(t) && typeof t.expression === 'string'))
+        .filter(t => (typeof t.query === 'string' && t.query.trim()) || (isMath(t) && typeof t.expression === 'string')
+            || (isExpr(t, 'threshold') && typeof t.expression === 'string' && thresholdOf(t)))
         .map(t => {
-            const math = isMath(t);
+            const math = isMath(t) || isExpr(t, 'threshold');
             const alias = math ? displayNameByRef.get(t.refId) : t.alias;
             const name = alias ?? t.refId;
             return {
                 refId: t.refId,
                 query: math ? String(t.expression) : t.query!,
-                ...(math ? { type: 'math' as const } : {}),
+                ...(isMath(t) ? { type: 'math' as const } : {}),
+                ...(isExpr(t, 'threshold') ? { type: 'threshold' as const, condition: thresholdOf(t) } : {}),
                 ...(alias ? { alias } : {}),
                 ...(colorByName.has(name) ? { color: colorByName.get(name) } : {}),
                 ...(dashedNames.has(name) ? { dashed: true } : {}),
@@ -155,6 +165,13 @@ export function panelToGrafana(panel: Panel): GrafanaPanel {
             // wyrażenie Grafany (Server Side Expression) - liczone po stronie Grafany z innych zapytań panelu
             return { refId: q.refId, datasource: EXPRESSION_DS, type: 'math', expression: q.query, hide: q.hidden || undefined };
         }
+        if (q.type === 'threshold') {
+            // "Threshold": input <query> is above / below / within / outside - 1 albo 0 w każdym punkcie
+            return {
+                refId: q.refId, datasource: EXPRESSION_DS, type: 'threshold', expression: q.query, hide: q.hidden || undefined,
+                conditions: [{ evaluator: { type: q.condition!.evaluator, params: q.condition!.params } }],
+            };
+        }
         return {
             ...previous,
             refId: q.refId,
@@ -178,7 +195,7 @@ export function panelToGrafana(panel: Panel): GrafanaPanel {
     });
     // nazwa serii wyrażenia (Grafana nazywa ją refId) - override wyświetlanej nazwy
     const nameOverrides: GrafanaOverride[] = p.queries
-        .filter(q => q.type === 'math' && q.alias)
+        .filter(q => q.type && q.alias)
         .map(q => ({ matcher: { id: 'byFrameRefID', options: q.refId }, properties: [{ id: 'displayName', value: q.alias }] }));
     const colorOverrides: GrafanaOverride[] = p.queries
         .filter(q => q.color || q.dashed || (q.unit && q.unit !== p.unit))

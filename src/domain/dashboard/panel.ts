@@ -1,13 +1,15 @@
 import { ValidationError } from '../../shared/errors';
-import { MathExpression } from '../metrics/expression';
+import { checkThreshold, MathExpression, ThresholdCondition } from '../metrics/expression';
 import { GRID_COLUMNS, GridPosition } from './grid-layout';
 
 export interface PanelQuery {
     refId: string;
-    /** InfluxQL z makrami Grafany; przy type "math" - wyrażenie, np. "$A / $B" */
+    /** InfluxQL z makrami Grafany; przy type "math" - wyrażenie, np. "$A / $B"; przy "threshold" - refId wejścia, np. "B" */
     query: string;
-    /** math - wyrażenie Grafany (Server Side Expression) liczone z innych zapytań panelu */
-    type?: 'math';
+    /** Wyrażenia Grafany (Server Side Expressions): math - działania na zapytaniach; threshold - 1/0 wg warunku */
+    type?: 'math' | 'threshold';
+    /** Warunek wyrażenia threshold, np. { evaluator: "gt", params: [90] } - "input B is above 90" */
+    condition?: ThresholdCondition;
     /** Jednostka tej serii, gdy inna niż panelu (np. percentunit przy panelu w GB) - prawa oś Y */
     unit?: string;
     alias?: string;
@@ -69,7 +71,7 @@ export class Panel {
         return {
             ...props,
             gridPos: { ...props.gridPos },
-            queries: props.queries.map(q => ({ ...q })),
+            queries: props.queries.map(q => ({ ...q, ...(q.condition ? { condition: { ...q.condition, params: [...q.condition.params] } } : {}) })),
             thresholds: props.thresholds?.map(t => ({ ...t })),
         };
     }
@@ -96,6 +98,11 @@ export class Panel {
             for (const ref of new MathExpression(q.query).refs) {
                 if (!refIds.has(ref)) throw new ValidationError(`Wyrażenie ${q.refId} ("${q.query}") odwołuje się do nieistniejącego zapytania ${ref}`);
             }
+        }
+        for (const q of p.queries.filter(x => x.type === 'threshold')) {
+            if (!refIds.has(q.query) || q.query === q.refId) throw new ValidationError(`Próg ${q.refId}: wejście "${q.query}" nie jest innym zapytaniem panelu`);
+            if (!q.condition) throw new ValidationError(`Próg ${q.refId}: brak warunku`);
+            checkThreshold(q.condition);
         }
     }
 

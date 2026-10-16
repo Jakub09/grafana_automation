@@ -39,6 +39,8 @@ export interface PlannedDashboard {
     summary?: { panel: Omit<NewPanel, 'gridPos'>; height: number };
     /** Układ z blueprintu; bez niego - domyślne dokładanie po 2 w wierszu, bez przestawiania istniejących */
     layout?: GridLayout;
+    /** Reguła wielowymiarowa dashboardu (alert.scope = "dashboard") - zamiast reguł paneli */
+    alert?: PlannedAlert & { panelLabel: string; panelTitlePattern: string; panelRuleTitles: string[] };
     active: boolean;
 }
 
@@ -48,6 +50,7 @@ function toPanelQuery(q: ExtraQuery, refId: string): PanelQuery {
         refId,
         query: q.query,
         ...(q.type ? { type: q.type } : {}),
+        ...(q.condition ? { condition: { ...q.condition, params: [...q.condition.params] } } : {}),
         ...(q.alias ? { alias: q.alias } : {}),
         ...(q.color ? { color: q.color } : {}),
         ...(q.dashed ? { dashed: true } : {}),
@@ -65,7 +68,7 @@ export function planProvisioning(tree: SchemaTree, blueprint: Blueprint, datasou
     const spanNulls = connectNulls !== undefined ? { spanNulls: connectNulls } : {};
 
     const summary = blueprint.summaryPanel;
-    return tree.dashboards.map(group => ({
+    return tree.dashboards.map(group => withDashboardAlert(blueprint, group.name, {
         name: group.name,
         title: blueprint.dashboardTitleFor(group.name),
         layout: blueprint.layout,
@@ -137,7 +140,7 @@ export function planProvisioning(tree: SchemaTree, blueprint: Blueprint, datasou
             };
 
             const alert = blueprint.alert;
-            if (!alert) return planned;
+            if (!alert || blueprint.alertScope === 'dashboard') return planned;
 
             const severity = (alert.labels.severity ?? 'alert').toUpperCase();
             const { condition } = alert;
@@ -145,7 +148,7 @@ export function planProvisioning(tree: SchemaTree, blueprint: Blueprint, datasou
             return {
                 ...planned,
                 alert: {
-                    policy: alert,
+                    policy: { ...alert, ruleGroup: blueprint.ruleGroupFor(group.name)! },
                     query: nodes?.find(n => n.type !== 'math')?.query ?? blueprint.alertQuery(group.name, panelGroup.name),
                     ...(nodes ? { nodes, conditionRefId: alert.conditionRefId ?? nodes[nodes.length - 1].refId } : {}),
                     title: `[${severity}] ${title}`,
@@ -155,4 +158,29 @@ export function planProvisioning(tree: SchemaTree, blueprint: Blueprint, datasou
             };
         }),
     }));
+}
+
+/** alert.scope = "dashboard": jedna reguła wielowymiarowa na dashboard (GROUP BY tagu panelu) */
+function withDashboardAlert(blueprint: Blueprint, dashboard: string, planned: PlannedDashboard): PlannedDashboard {
+    const alert = blueprint.alert;
+    if (!alert || blueprint.alertScope !== 'dashboard') return planned;
+    const severity = (alert.labels.severity ?? 'alert').toUpperCase();
+    const { condition } = alert;
+    const nodes = blueprint.alertNodesFor(dashboard, null);
+    return {
+        ...planned,
+        alert: {
+            policy: { ...alert, ruleGroup: blueprint.ruleGroupFor(dashboard)! },
+            query: nodes?.find(n => n.type !== 'math')?.query ?? blueprint.dashboardAlertQuery(dashboard),
+            ...(nodes ? { nodes, conditionRefId: alert.conditionRefId ?? nodes[nodes.length - 1].refId } : {}),
+            title: `[${severity}] ${planned.title}`,
+            summary: `${planned.title}: ${condition.reducer} ${condition.evaluator === 'gt' ? '>' : '<'} ${condition.threshold} `
+                + `(każdy ${blueprint.grouping.panelTag})`,
+            showOnChart: blueprint.alertShownOnChart,
+            panelLabel: blueprint.grouping.panelTag,
+            panelTitlePattern: blueprint.panelTitlePatternFor(dashboard),
+            // tytuły reguł paneli (scope "panel") - przy przejściu na regułę dashboardu są usuwane z --update
+            panelRuleTitles: planned.panels.map(p => `[${severity}] ${p.panel.title}`),
+        },
+    };
 }
