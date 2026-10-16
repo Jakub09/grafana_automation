@@ -235,3 +235,14 @@ test('Mapper dashboardu: wyrażenie Threshold ("input B is above 90") - zapis i 
     assert.deepEqual([back.type, back.query, back.condition, back.alias, back.unit], ['threshold', 'B', { evaluator: 'gt', params: [90] }, 'Powyżej 90%', 'bool']);
     assert.throws(() => dashboard.addPanel({ title: 'Q', queries: [{ refId: 'C', query: 'X', type: 'threshold', condition: { evaluator: 'gt', params: [1] } }] }), /wejście "X"/);
 });
+
+test('Mapper dashboardu: "Min interval" panelu i wyłączone odświeżanie dashboardu - zapis i odczyt', () => {
+    const mapper = new GrafanaDashboardMapper('v1beta1');
+    const dashboard = Dashboard.create({ title: 'D', folderUid: 'f', refresh: '', timeFrom: 'now-30d' });
+    dashboard.addPanel({ title: 'P', minInterval: '1d', queries: [{ refId: 'A', query: 'SELECT 1' }] });
+    const resource = mapper.toResource(dashboard);
+    assert.equal((resource.spec as { refresh?: string }).refresh, '');
+    assert.equal((resource.spec.panels as { interval?: string }[])[0].interval, '1d');
+    const back = mapper.toDomain(resource);
+    assert.deepEqual([back.refresh, back.timeFrom, back.panels[0].minInterval], ['', 'now-30d', '1d']);
+});

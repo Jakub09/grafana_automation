@@ -40,6 +40,8 @@ export interface PanelProps {
     thresholds?: PanelThreshold[];
     /** Łączenie linii nad brakami danych (Grafana "Connect null values"): true - zawsze, false - nigdy, liczba - poniżej tylu ms */
     spanNulls?: boolean | number;
+    /** Grafana "Min interval": najmniejszy $__interval panelu, np. "1d" przy danych dziennych (mniej pustych kubełków) */
+    minInterval?: string;
     queries: PanelQuery[];
     /** Oryginalna konfiguracja z systemu źródłowego - zachowywana przy zapisie */
     passthrough?: unknown;
@@ -119,6 +121,7 @@ export class Panel {
     public get max(): number | undefined { return this.props.max; }
     public get thresholds(): readonly PanelThreshold[] | undefined { return this.props.thresholds; }
     public get spanNulls(): boolean | number | undefined { return this.props.spanNulls; }
+    public get minInterval(): string | undefined { return this.props.minInterval; }
     public get queries(): readonly PanelQuery[] { return this.props.queries; }
 
     public get visibleQueries(): PanelQuery[] {

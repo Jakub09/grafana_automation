@@ -415,6 +415,7 @@ export class ReportService {
             })),
             yMin: panel.min,
             yMax: panel.max,
+            minInterval: panel.minInterval,
             analyses: panel.thresholds?.map(t => createAnalysis({ type: 'threshold', value: t.value, color: t.color, label: `Próg ${t.value}` })),
         };
     }

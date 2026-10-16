@@ -78,6 +78,8 @@ panel. Zawsze go sprawdź i dodaj sekcję `alert`, jeśli schemat ma mieć alert
 | `queries.panel`, `queries.alert` | – | własne szablony zapytań (niżej) |
 | `panelQueries` | – | **własna lista zapytań panelu** (z `refId`), także wyrażenia `$A / $B` ([niżej](#wyrażenia-i-własne-zapytania-w-panelach-panelqueries)) |
 | `connectNulls` | – | Grafana *Connect null values* w panelach i podsumowaniu: `true` = *Always*, `false` = *Never*, `"1h"` = *Threshold* (łączy przerwy krótsze niż 1 h). Bez klucza ustawienie w Grafanie się nie zmienia. Istniejące panele zmienia `provision apply --update`. Wykresy w mailach i raportach zawsze łączą linię nad pustymi kubełkami |
+| `minInterval` | – | Grafana *Min interval* paneli i podsumowania, np. `"1d"` przy danych dziennych ([niżej](#dane-aktualizowane-rzadko-np-raz-dziennie)) |
+| `dashboard` | – | `{ "refresh": "", "timeFrom": "now-30d" }`: odświeżanie dashboardów (`""` = wyłączone, domyślnie `5m`) i domyślny zakres czasu |
 | `layout` | – | układ paneli: `{ "panelsPerRow": 3, "panelHeight": 8 }` ([niżej](#układ-paneli-layout)) |
 | `extraQueries` | – | dodatkowe zapytania w każdym panelu, np. linia progu ([niżej](#dodatkowe-zapytania-w-panelu-extraqueries)) |
 | `inactiveAfterHours` | – | próg nieaktywności dla tego schematu (domyślnie `SERIES_INACTIVE_AFTER_HOURS`) |
@@ -181,6 +183,33 @@ wyrażeniem `A, B → C` każda reguła wysyła 2 zapytania. Co pomaga, od najpr
 
 Przy 316 regułach, grupach per LPAR, `5m` i fladze z punktu 3 obciążenie rozkłada się na ok. 30 chwil
 w ciągu 5 minut, czyli ok. 10 reguł naraz zamiast 316.
+
+### Dane aktualizowane rzadko (np. raz dziennie)
+
+Ustawienia domyślne zakładają dane zbierane co kilka minut. Przy danych dziennych większość zapytań jest zbędna:
+
+```json
+"minInterval": "1d",
+"dashboard": { "refresh": "", "timeFrom": "now-30d" },
+"queries": {
+  "alert": "SELECT last(\"VAL\") FROM \"MF.STG.SPACE\" WHERE \"LPAR\" = '{dashboard}' AND \"MTYPE\" = 'USED.PER' AND $timeFilter GROUP BY \"SGN\""
+},
+"alert": { "scope": "dashboard", "evaluationInterval": "1h", "lookbackSeconds": 172800, "pendingPeriod": "0s", ... }
+```
+
+| Ustawienie | Domyślnie | Przy danych dziennych | Efekt |
+|---|---|---|---|
+| `dashboard.refresh` | `5m` | `""` (wyłączone) albo `"1h"` | otwarty dashboard nie odpytuje bazy co 5 minut |
+| `minInterval` | automatyczny (7 dni / 500 ≈ 20 min) | `"1d"` | panel pobiera 1 punkt na dzień zamiast setek pustych kubełków; przy długich zakresach Grafana i tak zwiększa interwał |
+| zapytanie alertu | `mean(...) GROUP BY time(5m)` | `last(...) GROUP BY "SGN"` (bez `time`) | jedna wartość na SG zamiast serii kubełków |
+| `lookbackSeconds` | `3600` | `172800` (2 doby) | zawsze obejmuje ostatni dzienny pomiar |
+| `evaluationInterval` | `1m` | `"1h"` | 24 ewaluacje na dobę zamiast 1440 |
+| `pendingPeriod` | `5m` | `"0s"` | przy jednym punkcie dziennie czekanie niczego nie potwierdza; musi być wielokrotnością `evaluationInterval` |
+
+Sprawdzone na Grafanie 12.3.1: reguła z `last() ... GROUP BY "SGN"` ewaluuje się w kilka ms i daje osobną instancję
+na każdy SG (odpala tylko ten powyżej progu). Pierwsza ewaluacja po zmianie interwału na `1h` może nastąpić dopiero
+w ciągu godziny, bo Grafana rozkłada grupy w czasie. Istniejące dashboardy, panele i reguły zmienia
+`provision apply <nazwa> --update`. Wykresy w mailach i raportach z blueprintu też korzystają z `minInterval` paneli.
 
 ### Wyrażenia i własne zapytania w panelach (`panelQueries`)
 

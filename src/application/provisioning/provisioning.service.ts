@@ -392,13 +392,31 @@ export class ProvisioningService {
             }
         }
 
-        const dashboard = existing ?? Dashboard.create({ uid, title: planned.title, folderUid: ctx.folderUid, tags: planned.tags });
+        const dashboard = existing ?? Dashboard.create({
+            uid, title: planned.title, folderUid: ctx.folderUid, tags: planned.tags,
+            ...(planned.settings?.timeFrom ? { timeFrom: planned.settings.timeFrom } : {}),
+            ...(planned.settings?.refresh !== undefined ? { refresh: planned.settings.refresh } : {}),
+        });
         if (!existing) record({ type: 'create-dashboard', target: planned.title, details: `uid ${uid}` });
+
+        // odświeżanie i zakres czasu z blueprintu (istniejący dashboard - z --update)
+        let changed = false;
+        if (existing && planned.settings) {
+            const changes = [
+                ...(planned.settings.refresh !== undefined && planned.settings.refresh !== (existing.refresh ?? '')
+                    ? [{ field: 'refresh', before: existing.refresh || '(wyłączone)', after: planned.settings.refresh || '(wyłączone)' }] : []),
+                ...(planned.settings.timeFrom !== undefined && planned.settings.timeFrom !== existing.timeFrom
+                    ? [{ field: 'time.from', before: existing.timeFrom, after: planned.settings.timeFrom }] : []),
+            ];
+            if (changes.length && record({ type: 'update-dashboard', target: planned.title, changes, skipped: ctx.update ? undefined : NEEDS_UPDATE })) {
+                dashboard.setTimeSettings(planned.settings);
+                changed = true;
+            }
+        }
 
         // 1. Panele (dopasowanie po tytule): nowe, zmienione (--update), nieaktywne (--prune)
         const added: { panel: Panel; alert?: PlannedAlert }[] = [];
         const removed: number[] = [];
-        let changed = false;
         for (const plannedPanel of planned.panels) {
             const { title } = plannedPanel.panel;
             const panel = dashboard.findPanelByTitle(title);

@@ -39,6 +39,8 @@ export interface PlannedDashboard {
     summary?: { panel: Omit<NewPanel, 'gridPos'>; height: number };
     /** Układ z blueprintu; bez niego - domyślne dokładanie po 2 w wierszu, bez przestawiania istniejących */
     layout?: GridLayout;
+    /** Odświeżanie i zakres czasu dashboardu z blueprintu (undefined - bez zmian / domyślne) */
+    settings?: { refresh?: string; timeFrom?: string };
     /** Reguła wielowymiarowa dashboardu (alert.scope = "dashboard") - zamiast reguł paneli */
     alert?: PlannedAlert & { panelLabel: string; panelTitlePattern: string; panelRuleTitles: string[] };
     active: boolean;
@@ -64,13 +66,15 @@ function toPanelQuery(q: ExtraQuery, refId: string): PanelQuery {
  * Nowe panele dostają zapytania tylko dla aktywnych serii. Czysta funkcja - nic nie zapisuje.
  */
 export function planProvisioning(tree: SchemaTree, blueprint: Blueprint, datasourceUid?: string): PlannedDashboard[] {
-    const { unit, axisLabel, tags, connectNulls } = blueprint.props;
-    const spanNulls = connectNulls !== undefined ? { spanNulls: connectNulls } : {};
+    const { unit, axisLabel, tags, connectNulls, minInterval, dashboard: settings } = blueprint.props;
+    // wspólne opcje paneli i podsumowania (tylko ustawione w blueprincie)
+    const spanNulls = { ...(connectNulls !== undefined ? { spanNulls: connectNulls } : {}), ...(minInterval ? { minInterval } : {}) };
 
     const summary = blueprint.summaryPanel;
     return tree.dashboards.map(group => withDashboardAlert(blueprint, group.name, {
         name: group.name,
         title: blueprint.dashboardTitleFor(group.name),
+        ...(settings ? { settings } : {}),
         layout: blueprint.layout,
         tags: [...new Set([...tags, tree.measurement, group.name].filter(Boolean))],
         active: group.active,

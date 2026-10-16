@@ -360,3 +360,30 @@ test('Powrót z alert.scope "dashboard" do reguł paneli: reguła dashboardu usu
     assert.deepEqual(env.rules.items.map(r => r.title), ['[WARNING] L1 / SG1', '[WARNING] L1 / SG2']);
     assert.deepEqual((await env.service.plan('storage', { update: true }))[0].actions, []);
 });
+
+test('Dane dzienne: minInterval paneli (Grafana "Min interval") i ustawienia dashboardu (odświeżanie, zakres) - nowe od razu, istniejące z --update', async () => {
+    const env = setup(['M,LPAR=L1,SGN=SG1,MYTYPE=1']);
+    await env.service.apply('storage');
+    assert.deepEqual([env.dashboard().refresh, env.dashboard().timeFrom, env.dashboard().getPanel(1).minInterval], ['5m', 'now-7d', undefined]);
+
+    env.change({ minInterval: '1d', dashboard: { refresh: '', timeFrom: 'now-30d' } });
+    const plan = await env.service.plan('storage');
+    assert.deepEqual(plan[0].actions.map(a => [a.type, a.changes?.map(c => `${c.field}: ${c.before} -> ${c.after}`), a.skipped]), [
+        ['update-dashboard', ['refresh: 5m -> (wyłączone)', 'time.from: now-7d -> now-30d'], 'wymaga --update'],
+        ['update-panel', ['minInterval: null -> 1d'], 'wymaga --update'],
+    ]);
+    await env.service.apply('storage', { update: true });
+    assert.deepEqual([env.dashboard().refresh, env.dashboard().timeFrom, env.dashboard().getPanel(1).minInterval], ['', 'now-30d', '1d']);
+    assert.deepEqual((await env.service.plan('storage', { update: true }))[0].actions, []);
+});
+
+test('QueryTemplate: minInterval podnosi automatyczny $__interval (jak "Min interval" w Grafanie), stały interval ma pierwszeństwo', async () => {
+    const { QueryTemplate } = await import('../../src/domain/metrics/query-template.js');
+    const { TimeRange } = await import('../../src/domain/shared/time-range.js');
+    const week = TimeRange.lastHours(24 * 7);
+    const q = new QueryTemplate('GROUP BY time($__interval)');
+    assert.equal(q.render(week), 'GROUP BY time(1210s)'); // 7 dni / 500 punktów
+    assert.equal(q.render(week, undefined, '1d'), 'GROUP BY time(86400s)');
+    assert.equal(q.render(TimeRange.lastHours(24 * 3650), undefined, '1d'), `GROUP BY time(${Math.ceil(3650 * 86400 / 500)}s)`);
+    assert.equal(q.render(week, '1h', '1d'), 'GROUP BY time(3600s)');
+});

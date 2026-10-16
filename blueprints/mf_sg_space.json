@@ -29,6 +29,11 @@
     "mainframe"
   ],
   "connectNulls": true,
+  "minInterval": "1d",
+  "dashboard": {
+    "refresh": "",
+    "timeFrom": "now-30d"
+  },
   "layout": {
     "panelsPerRow": 3,
     "panelHeight": 8
@@ -92,19 +97,19 @@
     }
   ],
   "queries": {
-    "alert": "SELECT mean(\"VAL\") FROM \"MF.STG.SPACE\" WHERE \"LPAR\" = '{dashboard}' AND \"MTYPE\" = 'USED.PER' AND $timeFilter GROUP BY time({interval}), \"SGN\" fill(none)"
+    "alert": "SELECT last(\"VAL\") FROM \"MF.STG.SPACE\" WHERE \"LPAR\" = '{dashboard}' AND \"MTYPE\" = 'USED.PER' AND $timeFilter GROUP BY \"SGN\""
   },
   "alert": {
     "threshold": 90,
     "evaluator": "gt",
     "reducer": "last",
-    "pendingPeriod": "15m",
-    "lookbackSeconds": 1800,
-    "interval": "5m",
+    "pendingPeriod": "0s",
+    "lookbackSeconds": 172800,
+    "interval": "1d",
     "ruleGroup": "mf-storage-{dashboard}",
     "severity": "warning",
     "showOnChart": false,
-    "evaluationInterval": "5m",
+    "evaluationInterval": "1h",
     "scope": "dashboard"
   }
 }

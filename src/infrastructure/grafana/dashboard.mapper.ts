@@ -69,7 +69,7 @@ export class GrafanaDashboardMapper {
                 title: dashboard.title,
                 tags: [...dashboard.tags],
                 time: { from: dashboard.timeFrom, to: dashboard.timeTo },
-                ...(dashboard.refresh ? { refresh: dashboard.refresh } : {}),
+                ...(dashboard.refresh !== undefined ? { refresh: dashboard.refresh } : {}),
                 panels: mergePanels(baseSpec.panels ?? [], dashboard.panels.map(panelToGrafana), dashboard.layoutItems),
             },
         };
@@ -147,6 +147,7 @@ export function panelToDomain(raw: GrafanaPanel): Panel {
             ? steps.filter((st): st is { color: string; value: number } => typeof st.value === 'number').map(st => ({ value: st.value, color: st.color }))
             : undefined,
         spanNulls: spanNullsOf((defaults?.custom as { spanNulls?: unknown } | undefined)?.spanNulls),
+        minInterval: typeof raw.interval === 'string' && raw.interval ? raw.interval : undefined,
         queries,
         passthrough: raw,
     });
@@ -223,6 +224,7 @@ export function panelToGrafana(panel: Panel): GrafanaPanel {
         gridPos: { ...p.gridPos },
         datasource,
         targets,
+        ...(p.minInterval !== undefined ? { interval: p.minInterval } : {}),
         fieldConfig: {
             ...base.fieldConfig,
             defaults: {

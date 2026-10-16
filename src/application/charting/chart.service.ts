@@ -44,6 +44,8 @@ export interface ChartSpec {
     datasourceUid?: string;
     /** Stały interwał agregacji ($__interval), np. "1h" */
     interval?: string;
+    /** Najmniejszy interwał agregacji (Grafana "Min interval" panelu), np. "1d" */
+    minInterval?: string;
     /** Analizy nakładane na serie (trend, średnia krocząca...) */
     analyses?: ChartAnalysis[];
     /** Stały zakres osi Y (jednostki danych) */
@@ -120,6 +122,7 @@ export class ChartService {
             })),
             yMin: panel.min,
             yMax: panel.max,
+            minInterval: panel.minInterval,
             // progi panelu (jak w Grafanie) jako linie na wykresie
             analyses: panel.thresholds?.map(t => createAnalysis({ type: 'threshold', value: t.value, color: t.color, label: `Próg ${t.value}` })),
         };
@@ -130,19 +133,19 @@ export class ChartService {
     }
 
     /** Serie z bazy z etykietami jak na wykresie - bez rysowania (rankingi, ocena "wymaga uwagi") */
-    public async fetchSeries(spec: Pick<ChartSpec, 'series' | 'range' | 'database' | 'datasourceUid' | 'interval' | 'fixedColor'>): Promise<LabeledSeries[]> {
+    public async fetchSeries(spec: Pick<ChartSpec, 'series' | 'range' | 'database' | 'datasourceUid' | 'interval' | 'minInterval' | 'fixedColor'>): Promise<LabeledSeries[]> {
         const database = spec.database ?? await this.databases?.databaseFor(spec.datasourceUid);
         return this.querySeries(spec, spec.range, database);
     }
 
     private async querySeries(
-        spec: Pick<ChartSpec, 'series' | 'interval' | 'fixedColor'>, range: TimeRange, database: string | undefined,
+        spec: Pick<ChartSpec, 'series' | 'interval' | 'minInterval' | 'fixedColor'>, range: TimeRange, database: string | undefined,
     ): Promise<LabeledSeries[]> {
         // 1. Zapytania InfluxDB; 2. wyrażenia "math" liczone z ich wyników (kolejno - mogą korzystać z wcześniejszych)
         const results = new Array<TimeSeries[]>(spec.series.length);
         const influx = spec.series.map((s, i) => ({ s, i })).filter(({ s }) => !s.type);
         await mapLimit(influx, QUERY_CONCURRENCY, async ({ s, i }) => {
-            results[i] = await this.metrics.query(new QueryTemplate(s.query).render(range, spec.interval), database);
+            results[i] = await this.metrics.query(new QueryTemplate(s.query).render(range, spec.interval, spec.minInterval), database);
         });
         const byRef = new Map<string, TimeSeries[]>();
         spec.series.forEach((s, i) => { if (s.refId && results[i]) byRef.set(s.refId, results[i]); });

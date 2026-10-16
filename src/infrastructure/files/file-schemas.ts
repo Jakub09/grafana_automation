@@ -202,6 +202,14 @@ export const blueprintFileSchema = z.object({
     }).strict().default({})
         .describe('Znaczniki: {measurement} {field} {aggregation} {dashboard} {panel} {series} {where} {interval}. '
             + 'Zapytanie panelu musi zawierać $timeFilter i GROUP BY time($__interval).'),
+    minInterval: interval.optional()
+        .describe('Grafana "Min interval" paneli i podsumowania: najmniejszy $__interval, np. "1d" przy danych dziennych - '
+            + 'zapytania zwracają punkt na dzień zamiast setek pustych kubełków. Istniejące panele - provision apply --update.'),
+    dashboard: z.object({
+        refresh: z.string().regex(/^(\d+[smhd])?$/, 'Np. "1h", "15m" albo "" (wyłączone)').optional()
+            .describe('Automatyczne odświeżanie dashboardu ("" - wyłączone; domyślnie 5m). Przy danych dziennych: "" albo "1h"'),
+        timeFrom: z.string().optional().describe('Domyślny zakres czasu, np. "now-30d" (domyślnie now-7d)'),
+    }).strict().optional().describe('Ustawienia dashboardów; istniejące - provision apply --update'),
     connectNulls: z.union([z.boolean(), z.string().regex(/^\d+[smhd]$/, 'Czas, np. "1h", "30m"')]).optional()
         .describe('Grafana "Connect null values" w panelach i podsumowaniu: true - Always, false - Never, '
             + '"1h" - Threshold (łączy przerwy krótsze niż podany czas). Bez tego klucza - ustawienie z Grafany bez zmian.'),

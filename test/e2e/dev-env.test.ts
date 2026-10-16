@@ -366,4 +366,67 @@ describe('E2E: środowisko dev', { skip: !E2E && 'uruchom przez: npm run test:e2
         assert.match(res.headers.get('content-type') ?? '', /application\/pdf/);
         assert.equal(Buffer.from(await res.arrayBuffer()).subarray(0, 5).toString(), '%PDF-');
     });
+
+    test('grupa reguł na LPAR, reguła na SGN: grupy w Grafanie, powiązanie z panelami, interwał, ewaluacja, alert SG2, powrót', async () => {
+        type PromRule = { name: string; state: string; health: string; lastEvaluation: string; annotations?: Record<string, string> };
+        type PromGroup = { name: string; interval: number; rules: PromRule[] };
+        const groups = async (): Promise<PromGroup[]> => {
+            const res = await fetch(`${config.grafana.url}/api/prometheus/grafana/api/v1/rules`, { headers: { Authorization: `Bearer ${config.grafana.readToken}` } });
+            return (await res.json() as { data: { groups: PromGroup[] } }).data.groups;
+        };
+
+        // blueprint dev z grupą na LPAR (reguły nadal po jednej na panel SGN) i interwałem 30 s
+        const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'blueprints-groups-'));
+        const original = JSON.parse(await fs.readFile(path.join(config.paths.blueprints, 'storage-space.json'), 'utf-8'));
+        await fs.writeFile(path.join(dir, 'storage-space.json'), JSON.stringify({
+            ...original, $schema: undefined,
+            alert: { ...original.alert, scope: 'panel', ruleGroup: 'storage-dev-{dashboard}', evaluationInterval: '30s' },
+        }));
+        const perLpar = await createContainer({ ...config, paths: { ...config.paths, blueprints: dir } });
+
+        // --update przenosi istniejące reguły do grup per LPAR i ustawia interwał nowych grup
+        const results = await perLpar.provisioning.apply('storage-space', { update: true });
+        const moved = results.flatMap(r => r.actions).filter(a => a.type === 'update-rule' && a.changes?.some(ch => ch.field === 'ruleGroup'));
+        assert.ok(moved.length >= 5, `przeniesione reguły: ${moved.length}`);
+        assert.deepEqual(results.filter(r => r.title.startsWith('Grupa reguł')).map(r => r.title).sort(),
+            ['Grupa reguł storage-dev-LPAR1', 'Grupa reguł storage-dev-LPAR2']);
+        assert.ok((await perLpar.provisioning.plan('storage-space', { update: true })).every(r => r.actions.length === 0), 'plan po zapisie czysty');
+
+        // każda reguła w grupie swojego LPAR, powiązana ze swoim panelem SGN
+        const rules = (await c.alertRules.list()).filter(r => r.toProps().ruleGroup.startsWith('storage-dev-'));
+        for (const rule of rules) {
+            const lpar = rule.title.match(/LPAR\d/)![0];
+            assert.equal(rule.toProps().ruleGroup, `storage-dev-${lpar}`, rule.title);
+            const dashboard = await c.dashboards.get(rule.dashboardUid!);
+            assert.equal(`[WARNING] ${dashboard.getPanel(rule.panelId!).title}`, rule.title, 'reguła wskazuje swój panel');
+        }
+        const byGroup = (list: typeof rules) => Object.fromEntries(['storage-dev-LPAR1', 'storage-dev-LPAR2']
+            .map(g => [g, list.filter(r => r.toProps().ruleGroup === g).map(r => r.title).sort()]));
+        assert.deepEqual(byGroup(rules), {
+            'storage-dev-LPAR1': ['[WARNING] LPAR1 / SG1', '[WARNING] LPAR1 / SG2', '[WARNING] LPAR1 / SG3'],
+            'storage-dev-LPAR2': ['[WARNING] LPAR2 / SG1', '[WARNING] LPAR2 / SG2'],
+        });
+        assert.equal(await c.alertRules.getGroupInterval(config.grafana.folderUid!, 'storage-dev-LPAR1'), 30);
+        assert.equal(await c.alertRules.getGroupInterval(config.grafana.folderUid!, 'storage-dev-LPAR2'), 30);
+
+        // Grafana ewaluuje reguły grup; LPAR1 / SG2 (> 1800 GB) odpala (pending 0s)
+        const deadline = Date.now() + 90_000;
+        let lpar1: PromGroup | undefined;
+        while (Date.now() < deadline) {
+            lpar1 = (await groups()).find(g => g.name === 'storage-dev-LPAR1');
+            if (lpar1 && lpar1.rules.every(r => !r.lastEvaluation.startsWith('0001')) && lpar1.rules.some(r => r.state === 'firing')) break;
+            await new Promise(r => setTimeout(r, 3000));
+        }
+        assert.ok(lpar1, 'brak grupy storage-dev-LPAR1 w Grafanie');
+        assert.equal(lpar1.interval, 30);
+        assert.deepEqual(lpar1.rules.map(r => r.health).filter(h => h === 'error'), [], 'reguły bez błędów');
+        assert.deepEqual(lpar1.rules.filter(r => r.state === 'firing').map(r => r.name), ['[WARNING] LPAR1 / SG2']);
+
+        // powrót do jednej grupy z blueprintu dev - reguły wracają, puste grupy znikają
+        await c.provisioning.apply('storage-space', { update: true });
+        assert.ok((await c.alertRules.list()).every(r => !r.toProps().ruleGroup.startsWith('storage-dev-')));
+        assert.ok((await c.provisioning.plan('storage-space', { update: true })).every(r => r.actions.length === 0));
+        const left = (await groups()).filter(g => g.name.startsWith('storage-dev-'));
+        assert.deepEqual(left.map(g => g.name), [], 'puste grupy usunięte przez Grafanę');
+    });
 });

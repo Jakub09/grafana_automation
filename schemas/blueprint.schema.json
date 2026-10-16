@@ -110,6 +110,27 @@
       "default": {},
       "description": "Znaczniki: {measurement} {field} {aggregation} {dashboard} {panel} {series} {where} {interval}. Zapytanie panelu musi zawierać $timeFilter i GROUP BY time($__interval)."
     },
+    "minInterval": {
+      "type": "string",
+      "pattern": "^\\d+(s|m|h|d|w)$",
+      "description": "Grafana \"Min interval\" paneli i podsumowania: najmniejszy $__interval, np. \"1d\" przy danych dziennych - zapytania zwracają punkt na dzień zamiast setek pustych kubełków. Istniejące panele - provision apply --update."
+    },
+    "dashboard": {
+      "type": "object",
+      "properties": {
+        "refresh": {
+          "type": "string",
+          "pattern": "^(\\d+[smhd])?$",
+          "description": "Automatyczne odświeżanie dashboardu (\"\" - wyłączone; domyślnie 5m). Przy danych dziennych: \"\" albo \"1h\""
+        },
+        "timeFrom": {
+          "type": "string",
+          "description": "Domyślny zakres czasu, np. \"now-30d\" (domyślnie now-7d)"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Ustawienia dashboardów; istniejące - provision apply --update"
+    },
     "connectNulls": {
       "anyOf": [
         {

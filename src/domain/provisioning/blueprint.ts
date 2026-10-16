@@ -113,6 +113,10 @@ export interface BlueprintProps {
     layout?: GridLayout;
     /** Grafana "Connect null values" dla paneli i podsumowania: true - zawsze, false - nigdy, liczba ms - próg */
     connectNulls?: boolean | number;
+    /** Grafana "Min interval" paneli i podsumowania, np. "1d" przy danych aktualizowanych raz dziennie */
+    minInterval?: string;
+    /** Ustawienia dashboardów: odświeżanie ("" - wyłączone) i domyślny zakres czasu */
+    dashboard?: { refresh?: string; timeFrom?: string };
     alert?: BlueprintAlert;
 }
 

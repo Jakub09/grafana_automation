@@ -16,8 +16,11 @@ export class QueryTemplate {
      * @param interval stały interwał GROUP BY time(...) (np. "1h"); bez niego wyliczany z zakresu
      *                 tak, żeby wykres miał ok. 500 punktów
      */
-    public render(range: TimeRange, interval?: string): string {
-        const intervalSeconds = interval ? QueryTemplate.durationSeconds(interval) : Math.max(10, Math.ceil(range.durationSeconds / 500));
+    public render(range: TimeRange, interval?: string, minInterval?: string): string {
+        const auto = Math.max(10, Math.ceil(range.durationSeconds / 500));
+        // jak w Grafanie: "Min interval" panelu podnosi wyliczony interwał (stały "interval" ma pierwszeństwo)
+        const intervalSeconds = interval ? QueryTemplate.durationSeconds(interval)
+            : Math.max(auto, minInterval ? QueryTemplate.durationSeconds(minInterval) : 0);
         const timeFilter = `time >= ${range.from.getTime()}ms AND time <= ${range.to.getTime()}ms`;
 
         return this.text

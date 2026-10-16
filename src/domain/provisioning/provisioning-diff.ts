@@ -5,6 +5,7 @@ import { Panel, PanelQuery, refIdFor } from '../dashboard/panel';
 export type PlanActionType =
     | 'create-dashboard' | 'delete-dashboard'
     | 'add-panel' | 'add-summary' | 'update-panel' | 'prune-series' | 'remove-panel' | 'relayout' | 'update-rule-group'
+    | 'update-dashboard'
     | 'create-rule' | 'update-rule' | 'delete-rule' | 'pause-rule' | 'resume-rule';
 
 export interface FieldChange {
@@ -108,9 +109,9 @@ export function pruneQueries(current: readonly PanelQuery[], inactive: ReadonlyS
     return { queries: current.filter(q => !inactive.has(queryKey(q))).map(q => ({ ...q })), changes };
 }
 
-const PANEL_FIELDS = ['unit', 'axisLabel', 'min', 'max', 'thresholds', 'spanNulls'] as const;
+const PANEL_FIELDS = ['unit', 'axisLabel', 'min', 'max', 'thresholds', 'spanNulls', 'minInterval'] as const;
 /** Pola porównywane tylko wtedy, gdy ustawia je blueprint (inaczej zostaje ustawienie z Grafany) */
-const OPTIONAL_FIELDS: ReadonlySet<string> = new Set(['spanNulls']);
+const OPTIONAL_FIELDS: ReadonlySet<string> = new Set(['spanNulls', 'minInterval']);
 type PanelField = typeof PANEL_FIELDS[number];
 
 /**
@@ -119,7 +120,7 @@ type PanelField = typeof PANEL_FIELDS[number];
  */
 export function diffPanel(
     panel: Panel, desired: Omit<NewPanel, 'gridPos'>, keep: ReadonlySet<string> = new Set(),
-    fields: readonly PanelField[] = ['unit', 'axisLabel', 'spanNulls'],
+    fields: readonly PanelField[] = ['unit', 'axisLabel', 'spanNulls', 'minInterval'],
 ) {
     const changes: FieldChange[] = [];
     const update: Partial<Pick<NewPanel, PanelField | 'queries'>> = {};
@@ -177,6 +178,7 @@ export function describeAction(action: PlanAction): string {
         'remove-panel': 'usunięcie panelu',
         relayout: 'układ paneli',
         'update-rule-group': 'interwał ewaluacji grupy reguł',
+        'update-dashboard': 'ustawienia dashboardu',
         'create-rule': 'nowa reguła',
         'update-rule': 'zmiana reguły',
         'delete-rule': 'usunięcie reguły',

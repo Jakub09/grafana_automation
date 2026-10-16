@@ -37,6 +37,8 @@ export interface NewPanel {
     thresholds?: PanelThreshold[];
     /** Łączenie linii nad brakami danych (Grafana "Connect null values"): true - zawsze, false - nigdy, liczba - poniżej tylu ms */
     spanNulls?: boolean | number;
+    /** Grafana "Min interval": najmniejszy $__interval panelu, np. "1d" przy danych dziennych (mniej pustych kubełków) */
+    minInterval?: string;
     queries: PanelQuery[];
 }
 
@@ -109,6 +111,12 @@ export class Dashboard {
         this.props.title = title.trim();
     }
 
+    /** Zakres czasu i odświeżanie dashboardu (refresh "" - bez automatycznego odświeżania) */
+    public setTimeSettings(settings: { timeFrom?: string; refresh?: string }): void {
+        if (settings.timeFrom !== undefined) this.props.timeFrom = settings.timeFrom;
+        if (settings.refresh !== undefined) this.props.refresh = settings.refresh;
+    }
+
     public setTags(tags: string[]): void {
         this.props.tags = [...new Set(tags)];
     }
@@ -144,6 +152,7 @@ export class Dashboard {
             max: input.max,
             thresholds: input.thresholds,
             spanNulls: input.spanNulls,
+            minInterval: input.minInterval,
             queries: input.queries,
         });
         this.props.panels.push(panel);
